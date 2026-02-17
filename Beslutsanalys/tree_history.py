@@ -1,0 +1,89 @@
+
+from itertools import combinations
+
+
+#outcome ger utfall och sannolikhet för utfall, 
+#samt om det betingar vidare från tidigare händelser
+class outcome():
+    def __init__(self, name,):
+        self.name = name
+        self.conditional_p = {} #dict: condition,p
+        self.children = []
+    def set_p(self, condition, p):
+        if isinstance(condition, str): 
+            condition = (condition,) 
+        self.conditional_p[condition] = p
+
+    def get_p(self, history): 
+        for L in range(len(history), -1, -1): 
+            for combo in combinations(history, L): 
+                if combo in self.conditional_p: 
+                    return self.conditional_p[combo]
+
+        # Om inget hittas (borde aldrig hända om tom touple finns) 
+        raise ValueError("No matching probability found")
+    
+#treenode lägger in flertal outcomes i en lista det blir alla möjliga utfall för den specifika händelsen.
+class treenode():
+    def __init__(self, name):
+        self.name = name    
+        self.outcome = []
+    
+    def add_outcomes(self, outcome):
+        self.outcome.append(outcome)
+
+#treematrix lägger in alla noder och dess betigningar i en matris.
+
+class treematrix(): 
+    def __init__(self):
+        self.level = []
+
+    def add_node(self, level_index, node):
+        while len(self.level) <= level_index:
+            self.level.append([])
+        self.level[level_index].append(node)
+    
+#används för att gå genom trädet och dess möjliga utffall. 
+def traverse_tree(tree:'treematrix'):
+    results = []
+
+    def recurse(level, currentpath, current_p):
+        if level == len(tree.level):
+            results.append((currentpath, current_p))
+            return
+        
+        for node in tree.level[level]:
+            for oc in node.outcome: 
+                p = oc.get_p(currentpath)
+                if p is None:
+                    raise ValueError( f"There is no register probability for {oc.name} given {currentpath}")
+                recurse(level +1, currentpath + [oc.name], current_p*p)
+    recurse (0,[],1)
+    return results
+
+# används för att inte bara visa vilka sannolikheter som är betingade
+# Skapar även parent-child relationer mellan händelser
+def build_child_structure(tree:'treematrix'):
+    results = traverse_tree(tree)
+
+    # Rensa gamla barn
+    for level in tree.level:
+        for node in level:
+            for oc in node.outcome:
+                oc.children = []
+
+    # Bygg parent → child relationer
+    for path, _ in results:
+        for level in range(len(path) - 1):
+            parent_name = path[level]
+            child_name = path[level + 1]
+
+            parent_node = tree.level[level][0]
+            child_node = tree.level[level + 1][0]
+
+            parent_outcome = next(o for o in parent_node.outcome if o.name == parent_name)
+            child_outcome = next(o for o in child_node.outcome if o.name == child_name)
+
+            if child_outcome not in parent_outcome.children:
+                parent_outcome.children.append(child_outcome)
+
