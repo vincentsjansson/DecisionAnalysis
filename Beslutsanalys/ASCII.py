@@ -1,4 +1,4 @@
-from treecore import outcome, treenode, treematrix, traverse_tree, build_child_structure
+from backend.treemodel import outcome, treenode, treematrix, traverse_tree, build_child_structure
 
 def visualize_tree_ASCII(tree):
     output = []
