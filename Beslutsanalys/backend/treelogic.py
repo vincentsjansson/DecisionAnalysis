@@ -1,46 +1,30 @@
-from backend.treemodel import outcome, treenode, treematrix
-   
-#används för att gå genom trädet och dess möjliga utffall. 
-def traverse_tree(tree:'treematrix'):
+from backend.treemodel import TreeNode, Outcome
+
+def traverse_tree(root: TreeNode):
     results = []
 
-    def recurse(level, currentpath, current_p):
-        if level == len(tree.level):
-            results.append((currentpath, current_p))
+    def recurse(node: TreeNode, history: list[str], current_p: float):
+        # Bygg history_set
+        history_set = set(history)
+
+        # Applicera kombinations-betingning
+        node.apply_conditional_probabilities(history_set)
+
+        # Om noden saknar outcomes → blad
+        if not node.outcomes:
+            results.append((history, current_p))
             return
-        
-        for node in tree.level[level]:
-            for oc in node.outcome: 
-                p = oc.get_p(currentpath)
-                if p is None:
-                    raise ValueError( f"There is no register probability for {oc.name} given {currentpath}")
-                recurse(level +1, currentpath + [oc.name], current_p*p)
-    recurse (0,[],1)
+
+        # Gå igenom outcomes
+        for oc in node.outcomes:
+            event = f"{node.name}:{oc.name}"
+            new_history = history + [event]
+            new_p = current_p * oc.probability
+
+            if oc.child is None:
+                results.append((new_history, new_p))
+            else:
+                recurse(oc.child, new_history, new_p)
+
+    recurse(root, [], 1.0)
     return results
-
-# används för att inte bara visa vilka sannolikheter som är betingade
-# Skapar även parent-child relationer mellan händelser
-def build_child_structure(tree:'treematrix'):
-    results = traverse_tree(tree)
-
-    # Rensa gamla barn
-    for level in tree.level:
-        for node in level:
-            for oc in node.outcome:
-                oc.children = []
-
-    # Bygg parent → child relationer
-    for path, _ in results:
-        for level in range(len(path) - 1):
-            parent_name = path[level]
-            child_name = path[level + 1]
-
-            parent_node = tree.level[level][0]
-            child_node = tree.level[level + 1][0]
-
-            parent_outcome = next(o for o in parent_node.outcome if o.name == parent_name)
-            child_outcome = next(o for o in child_node.outcome if o.name == child_name)
-
-            if child_outcome not in parent_outcome.children:
-                parent_outcome.children.append(child_outcome)
-

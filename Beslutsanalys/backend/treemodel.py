@@ -1,62 +1,65 @@
-
-from itertools import combinations
-
-
-#outcome ger utfall och sannolikhet för utfall, 
-#samt om det betingar vidare från tidigare händelser
-class outcome():
-    def __init__(self, name,):
+class Outcome:
+    def __init__(self, name: str, probability: float = 0.0, child: "TreeNode" = None):
         self.name = name
-        self.conditional_p = {} #dict: condition,p
-        self.children = []
-    def set_p(self, condition, p):
-        if isinstance(condition, str): 
-            condition = (condition,) 
-        self.conditional_p[condition] = p
+        self.probability = probability
+        self.child = child
 
-    def get_p(self, history): 
-        for L in range(len(history), -1, -1): 
-            for combo in combinations(history, L): 
-                if combo in self.conditional_p: 
-                    return self.conditional_p[combo]
-        # Om inget hittas (borde aldrig hända om tom touple finns) 
-        raise ValueError("No matching probability found")
-    
-    def to_dict(self):
-        return {"name"          :self.name, 
-                "conditional_p" :{",".join(cond): p for cond, p in self.conditional_p.items()}, 
-                "Children"      :[child.name for child in self.children]}
-
-#treenode lägger in flertal outcomes i en lista det blir alla möjliga utfall för den specifika händelsen.
-
-class treenode():
-    def __init__(self, name):
-        self.name = name    
-        self.outcome = []
-    
-    def add_outcomes(self, outcome):
-        self.outcome.append(outcome)
-    
-    def to_dict(self):
+    def to_dict(self) -> dict:
         return {
-        "name":     self.name,
-        "outcomes": [oc.to_dict() for oc in self.outcome]}
+            "name": self.name,
+            "probability": self.probability,
+            "child": self.child.to_dict() if self.child else None
+        }
 
 
-#treematrix lägger in alla noder och dess betigningar i en matris.
+class TreeNode:
+    def __init__(self, name: str, parent_outcome: Outcome = None):
+        self.name = name
+        self.outcomes: list[Outcome] = []
+        self.parent_outcome = parent_outcome
 
-class treematrix(): 
-    def __init__(self):
-        self.level = []
+        # Kombinations-betingning: nyckel = frozenset av events
+        # värde = dict outcome_name -> probability
+        self.conditional_tables: dict[frozenset[str], dict[str, float]] = {}
 
-    def add_node(self, level_index, node):
-        while len(self.level) <= level_index:
-            self.level.append([])
-        self.level[level_index].append(node)
-    
-    def to_dict(self):
+    def add_outcome(self, name: str, probability: float = 0.0) -> Outcome:
+        oc = Outcome(name=name, probability=probability)
+        self.outcomes.append(oc)
+        return oc
+
+    def set_child(self, outcome: Outcome, child_node: "TreeNode") -> None:
+        outcome.child = child_node
+        child_node.parent_outcome = outcome
+
+    def apply_conditional_probabilities(self, history_set: set[str]) -> None:
+        """Matchar conditional tables baserat på subset-logik."""
+
+        best_match = None
+        best_size = -1
+
+        for condition, probs in self.conditional_tables.items():
+            if condition.issubset(history_set):
+                if len(condition) > best_size:
+                    best_match = probs
+                    best_size = len(condition)
+
+        if best_match is not None:
+            # Sätt sannolikheter
+            for oc in self.outcomes:
+                if oc.name in best_match:
+                    oc.probability = best_match[oc.name]
+
+            # Normalisera
+            total = sum(oc.probability for oc in self.outcomes)
+            if total > 0:
+                for oc in self.outcomes:
+                    oc.probability /= total
+
+    def to_dict(self) -> dict:
         return {
-        "levels": [[node.to_dict() for node in level] for level in self.level]}
-
-
-    
+            "name": self.name,
+            "outcomes": [oc.to_dict() for oc in self.outcomes],
+            "conditional_tables": {
+                tuple(cond): probs for cond, probs in self.conditional_tables.items()
+            }
+        }
