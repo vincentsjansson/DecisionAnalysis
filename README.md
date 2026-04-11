@@ -7,22 +7,15 @@ The system is designed with a clear separation between data representation, tran
 ## Project Structure
 Beslutsanalys/
 ├── backend/
-
 │   ├── treemodel.py        # TreeNode and Outcome classes
-
 │   ├── converters.py       # JSON ↔ backend converters
-
 │   ├── treelogic.py        # Traversal and probability logic
-
 │   └── init.py
 │
 ├── frontend/               # Placeholder for upcoming JS/HTML version
-
 │
 ├── testconverters.py       # Round‑trip test for model integrity
-
 ├── requirements.txt
-
 └── README.md
 
 
