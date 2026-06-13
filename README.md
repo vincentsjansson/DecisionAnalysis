@@ -18,14 +18,23 @@ introductory course in risk, safety, and crisis management.
 DecisionAnalysis/
 
 ├── backend/
+
 │   ├── treemodel.py       # TreeNode and Outcome classes (node_type, value)
+
 │   ├── treelogic.py       # EV calculation, traversal, backward fill
+
 │   ├── converters.py      # JSON ↔ Python model conversion
+
 │   ├── main.py            # FastAPI server (POST /backward)
+
 │   └── init.py
+
 │
+
 ├── frontend/
+
 │   ├── csharp-wpf/        # WPF desktop app (current UI)
+
 │   └── web/               # Planned TypeScript/GitHub Pages version
 
 ## Tech Stack
