@@ -52,7 +52,7 @@ DecisionAnalysis/
 pip install -r requirements.txt
 uvicorn backend.main:app --reload
 ```
-Backend runs at `http://127.0.0.1:8000`
+
 ### 2. Desktop app
 Open `frontend/csharp-wpf/DecisionAnalysis.slnx` in Visual Studio 
 and press F5.
