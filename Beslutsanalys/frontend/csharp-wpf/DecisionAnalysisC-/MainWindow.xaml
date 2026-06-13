@@ -1,0 +1,96 @@
+<Window x:Class="DecisionAnalysis.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Decision Analysis" Height="680" Width="1100"
+        Background="#1e1e2e" Foreground="White" FontFamily="Segoe UI"
+        Loaded="Window_Loaded">
+
+    <Window.Resources>
+
+        <!-- Sequence pill — normal -->
+        <Style x:Key="Pill" TargetType="Border">
+            <Setter Property="Background"       Value="#2a2a3e"/>
+            <Setter Property="BorderBrush"      Value="#7c6af7"/>
+            <Setter Property="BorderThickness"  Value="1.5"/>
+            <Setter Property="CornerRadius"     Value="16"/>
+            <Setter Property="Padding"          Value="16,6"/>
+            <Setter Property="Margin"           Value="2,0"/>
+            <Setter Property="Cursor"           Value="Hand"/>
+        </Style>
+
+        <!-- Sequence pill — selected -->
+        <Style x:Key="PillSelected" TargetType="Border" BasedOn="{StaticResource Pill}">
+            <Setter Property="Background"  Value="#3d3060"/>
+            <Setter Property="BorderBrush" Value="#a898ff"/>
+        </Style>
+
+        <!-- Popup action button -->
+        <Style x:Key="PopupBtn" TargetType="Button">
+            <Setter Property="Background"              Value="Transparent"/>
+            <Setter Property="Foreground"              Value="White"/>
+            <Setter Property="BorderThickness"         Value="0"/>
+            <Setter Property="Padding"                 Value="12,9"/>
+            <Setter Property="FontSize"                Value="13"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Cursor"                  Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                                CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#3d3060"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="76"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- ── Sequence bar ───────────────────────────── -->
+        <Border Grid.Row="0" Background="#14142a"
+                BorderBrush="#2e2e4a" BorderThickness="0,0,0,1">
+            <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="SequencePanel" Orientation="Horizontal"
+                            VerticalAlignment="Center" Margin="24,0"/>
+            </ScrollViewer>
+        </Border>
+
+        <!-- ── Tree canvas ───────────────────────────── -->
+        <Canvas x:Name="TreeCanvas" Grid.Row="1" Background="#1e1e2e"
+                SizeChanged="TreeCanvas_SizeChanged"/>
+
+        <!-- ── Node action popup ─────────────────────── -->
+        <Popup x:Name="NodePopup" StaysOpen="False" AllowsTransparency="True"
+               Placement="MousePoint">
+            <Border Background="#1a1a2e" BorderBrush="#7c6af7" BorderThickness="1"
+                    CornerRadius="8" Padding="4">
+                <Border.Effect>
+                    <DropShadowEffect Color="#7c6af7" BlurRadius="20"
+                                      Opacity="0.35" ShadowDepth="0"/>
+                </Border.Effect>
+                <StackPanel MinWidth="175">
+                    <Button x:Name="BtnAddOutcome"  Style="{StaticResource PopupBtn}"
+                            Content="＋  Add outcome"       Click="BtnAddOutcome_Click"/>
+                    <Button x:Name="BtnToggleType"  Style="{StaticResource PopupBtn}"
+                            Content="⇄  Toggle type"        Click="BtnToggleType_Click"/>
+                    <Button x:Name="BtnEditOutcomes" Style="{StaticResource PopupBtn}"
+                            Content="✎  Edit outcomes"       Click="BtnEditOutcomes_Click"/>
+                </StackPanel>
+            </Border>
+        </Popup>
+
+    </Grid>
+</Window>

@@ -1,0 +1,15 @@
+# Build artifacts (C#)
+bin/
+obj/
+.vs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Project-specific ignores
+_archive/
+
+# Stray local file
+git
