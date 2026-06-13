@@ -59,6 +59,7 @@
       <SubType>Designer</SubType>
     </ApplicationDefinition>
     <Compile Include="Models\TreeModel.cs" />
+    <Compile Include="ConditionalTableDialog.cs" />
     <Compile Include="EditOutcomesWindow.cs" />
     <Compile Include="OutcomeNameDialog.cs" />
     <Compile Include="Services\APIClient.cs" />

@@ -21,11 +21,19 @@ namespace DecisionAnalysis.ViewModels
         }
     }
 
+    public class ConditionalRow
+    {
+        public string Condition { get; set; }
+        public Dictionary<string, double> Probs { get; } = new Dictionary<string, double>();
+        public ConditionalRow(string condition) { Condition = condition; }
+    }
+
     public class TreeNode
     {
         public string Name { get; set; }
         public NodeType NodeType { get; set; }
         public List<Outcome> Outcomes { get; } = new List<Outcome>();
+        public List<ConditionalRow> ConditionalTable { get; } = new List<ConditionalRow>();
 
         public TreeNode(string name, NodeType nodeType = NodeType.Chance)
         {
@@ -73,6 +81,17 @@ namespace DecisionAnalysis.ViewModels
         }
 
         public void AddNode(TreeNode node) => _sequence.Add(node);
+
+        public void RemoveNode(TreeNode node)
+        {
+            _sequence.Remove(node);
+        }
+
+        public void RenameNode(TreeNode node, string newName)
+        {
+            node.Name = newName;
+            Notify();
+        }
 
         public void MoveLeft(TreeNode node)
         {

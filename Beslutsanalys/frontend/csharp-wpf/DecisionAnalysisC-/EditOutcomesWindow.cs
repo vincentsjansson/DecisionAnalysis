@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -9,19 +10,24 @@ namespace DecisionAnalysis
 {
     internal class EditOutcomesWindow : Window
     {
-        private readonly TreeNode  _node;
-        private readonly System.Collections.Generic.List<TextBox> _probBoxes
-            = new System.Collections.Generic.List<TextBox>();
-        private readonly System.Collections.Generic.List<TextBox> _valueBoxes
-            = new System.Collections.Generic.List<TextBox>();
-        private readonly TextBlock _warningBlock;
+        private class OutcomeRowData
+        {
+            public TextBox NameBox;
+            public TextBox ProbBox;
+            public Grid    Row;
+        }
+
+        private readonly TreeNode          _node;
+        private readonly StackPanel        _rowsPanel;
+        private readonly TextBlock         _warningBlock;
+        private readonly List<OutcomeRowData> _rows = new List<OutcomeRowData>();
         private bool _updating;
 
         public EditOutcomesWindow(TreeNode node)
         {
             _node = node;
             Title  = "Edit outcomes — " + node.Name;
-            Width  = 390;
+            Width  = 360;
             SizeToContent = SizeToContent.Height;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ResizeMode  = ResizeMode.NoResize;
@@ -33,52 +39,26 @@ namespace DecisionAnalysis
 
             root.Children.Add(new TextBlock
             {
-                Text = "Outcomes for node '" + node.Name + "':",
+                Text = "Outcomes for '" + node.Name + "':",
                 Foreground = Brushes.White, FontSize = 13,
-                Margin = new Thickness(0, 0, 0, 12)
+                Margin = new Thickness(0, 0, 0, 10)
             });
 
             // Column headers
-            var header = MakeRow();
-            AddCell(header, "Name",  0, isHeader: true);
-            AddCell(header, "Prob.", 1, isHeader: true);
-            AddCell(header, "Value", 2, isHeader: true);
+            var header = MakeGrid();
+            AddHeaderCell(header, "Name", 0);
+            AddHeaderCell(header, "Probability", 1);
             root.Children.Add(header);
 
-            for (int i = 0; i < node.Outcomes.Count; i++)
-            {
-                var oc  = node.Outcomes[i];
-                var row = MakeRow();
+            // Rows panel — rows are added dynamically
+            _rowsPanel = new StackPanel();
+            root.Children.Add(_rowsPanel);
 
-                var nameLabel = new TextBlock
-                {
-                    Text = oc.Name, Foreground = Brushes.White, FontSize = 13,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(2, 0, 8, 0)
-                };
-                Grid.SetColumn(nameLabel, 0);
-                row.Children.Add(nameLabel);
+            // Populate from existing outcomes
+            foreach (var oc in node.Outcomes)
+                AppendRow(oc.Name, oc.Probability);
 
-                var probBox  = MakeBox(oc.Probability.ToString("G4"));
-                var valueBox = MakeBox(oc.Value.ToString("G4"));
-                Grid.SetColumn(probBox,  1);
-                Grid.SetColumn(valueBox, 2);
-                row.Children.Add(probBox);
-                row.Children.Add(valueBox);
-                _probBoxes.Add(probBox);
-                _valueBoxes.Add(valueBox);
-
-                int captured = i;
-                probBox.LostFocus += (s, e) => NormalizeOthers(captured, probBox.Text);
-                probBox.KeyDown   += (s, e) =>
-                {
-                    if (e.Key == Key.Return) NormalizeOthers(captured, probBox.Text);
-                };
-
-                root.Children.Add(row);
-            }
-
-            // Warning
+            // Warning label
             _warningBlock = new TextBlock
             {
                 Text = "", Visibility = Visibility.Collapsed,
@@ -87,20 +67,38 @@ namespace DecisionAnalysis
             };
             root.Children.Add(_warningBlock);
 
-            // Buttons
+            // + Add outcome button
+            var addRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+            var addBtn = new Button
+            {
+                Content = "+ Add outcome",
+                Background      = new SolidColorBrush(Color.FromRgb(0x2a, 0x2a, 0x3e)),
+                Foreground      = new SolidColorBrush(Color.FromRgb(0xa8, 0x98, 0xff)),
+                BorderBrush     = new SolidColorBrush(Color.FromRgb(0x7c, 0x6a, 0xf7)),
+                BorderThickness = new Thickness(1),
+                Padding         = new Thickness(10, 5, 10, 5),
+                FontSize        = 12, Cursor = Cursors.Hand
+            };
+            addBtn.Click += (s, e) => AppendRow("", 0);
+            addRow.Children.Add(addBtn);
+            root.Children.Add(addRow);
+
+            // Save / Cancel buttons
             var btnRow = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 16, 0, 0)
+                Margin = new Thickness(0, 14, 0, 0)
             };
             var cancelBtn = ActionButton("Cancel", false);
             cancelBtn.Click += (s, e) => Close();
-
             var saveBtn = ActionButton("Save", true);
             saveBtn.Margin = new Thickness(8, 0, 0, 0);
             saveBtn.Click += (s, e) => SaveAndClose();
-
             btnRow.Children.Add(cancelBtn);
             btnRow.Children.Add(saveBtn);
             root.Children.Add(btnRow);
@@ -108,25 +106,75 @@ namespace DecisionAnalysis
             Content = root;
         }
 
-        private Grid MakeRow()
+        private void AppendRow(string name, double prob)
+        {
+            int idx = _rows.Count;
+
+            var nameBox = MakeBox(name);
+            var probBox = MakeBox(prob.ToString("G4"));
+
+            var row = MakeGrid();
+            Grid.SetColumn(nameBox, 0);
+            row.Children.Add(nameBox);
+            Grid.SetColumn(probBox, 1);
+            row.Children.Add(probBox);
+
+            // × remove button in col 2
+            var removeTb = new TextBlock
+            {
+                Text = "×", FontSize = 14, Cursor = Cursors.Hand,
+                Foreground = new SolidColorBrush(Color.FromArgb(0x66, 0xff, 0x88, 0x88)),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(2, 0, 2, 0)
+            };
+            removeTb.MouseEnter += (s, ev) =>
+                removeTb.Foreground = new SolidColorBrush(Color.FromArgb(0xff, 0xff, 0x88, 0x88));
+            removeTb.MouseLeave += (s, ev) =>
+                removeTb.Foreground = new SolidColorBrush(Color.FromArgb(0x66, 0xff, 0x88, 0x88));
+            Grid.SetColumn(removeTb, 2);
+            row.Children.Add(removeTb);
+
+            var data = new OutcomeRowData { NameBox = nameBox, ProbBox = probBox, Row = row };
+            _rows.Add(data);
+            _rowsPanel.Children.Add(row);
+
+            var capData = data;
+            removeTb.MouseLeftButtonUp += (s, ev) => RemoveRow(capData);
+
+            probBox.LostFocus += (s, ev) => NormalizeOthers(capData, probBox.Text);
+            probBox.KeyDown   += (s, ev) =>
+            {
+                if (ev.Key == Key.Return) NormalizeOthers(capData, probBox.Text);
+            };
+        }
+
+        private void RemoveRow(OutcomeRowData data)
+        {
+            _rows.Remove(data);
+            _rowsPanel.Children.Remove(data.Row);
+            // Re-wire indices for normalization by rebuilding event references is not
+            // possible after the fact, so NormalizeOthers uses _rows index lookup instead.
+        }
+
+        // Grid with 3 columns: Name (star) | Prob (80px) | × (28px)
+        private Grid MakeGrid()
         {
             var g = new Grid { Margin = new Thickness(0, 3, 0, 0) };
             g.ColumnDefinitions.Add(new ColumnDefinition
                 { Width = new GridLength(1, GridUnitType.Star) });
-            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
-            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
             return g;
         }
 
-        private void AddCell(Grid g, string text, int col, bool isHeader)
+        private void AddHeaderCell(Grid g, string text, int col)
         {
             var tb = new TextBlock
             {
                 Text = text, FontSize = 11,
-                Foreground = isHeader
-                    ? new SolidColorBrush(Color.FromArgb(0x99, 0xff, 0xff, 0xff))
-                    : Brushes.White,
-                Margin = new Thickness(2, 0, 2, 0)
+                Foreground = new SolidColorBrush(Color.FromArgb(0x99, 0xff, 0xff, 0xff)),
+                Margin = new Thickness(2, 0, 2, 4)
             };
             Grid.SetColumn(tb, col);
             g.Children.Add(tb);
@@ -141,15 +189,14 @@ namespace DecisionAnalysis
             BorderBrush     = new SolidColorBrush(Color.FromRgb(0x7c, 0x6a, 0xf7)),
             BorderThickness = new Thickness(1),
             Padding         = new Thickness(5, 3, 5, 3),
-            FontSize        = 12,
-            Margin          = new Thickness(2, 0, 2, 0),
+            FontSize        = 12, Margin = new Thickness(2, 0, 2, 0),
             FontFamily      = new FontFamily("Segoe UI")
         };
 
         private Button ActionButton(string label, bool primary) => new Button
         {
-            Content = label,
-            Background = primary
+            Content         = label,
+            Background      = primary
                 ? new SolidColorBrush(Color.FromRgb(0x7c, 0x6a, 0xf7))
                 : new SolidColorBrush(Color.FromRgb(0x2a, 0x2a, 0x3e)),
             Foreground      = Brushes.White,
@@ -159,21 +206,21 @@ namespace DecisionAnalysis
             FontSize        = 13, Cursor = Cursors.Hand
         };
 
-        // When probability of index `idx` is changed to `rawText`, rescale others.
-        private void NormalizeOthers(int idx, string rawText)
+        private void NormalizeOthers(OutcomeRowData row, string rawText)
         {
             if (_updating) return;
+            if (!_rows.Contains(row)) return;
             if (!double.TryParse(rawText, out double newVal)) return;
             newVal = Math.Max(0, Math.Min(1, newVal));
 
             _updating = true;
 
-            int    n        = _probBoxes.Count;
+            int    n         = _rows.Count;
             double sumOthers = 0;
             for (int i = 0; i < n; i++)
             {
-                if (i == idx) continue;
-                if (double.TryParse(_probBoxes[i].Text, out double p)) sumOthers += p;
+                if (_rows[i] == row) continue;
+                if (double.TryParse(_rows[i].ProbBox.Text, out double p)) sumOthers += p;
             }
 
             double remaining = 1.0 - newVal;
@@ -182,22 +229,22 @@ namespace DecisionAnalysis
                 double scale = remaining / sumOthers;
                 for (int i = 0; i < n; i++)
                 {
-                    if (i == idx) continue;
-                    if (double.TryParse(_probBoxes[i].Text, out double p))
-                        _probBoxes[i].Text = (p * scale).ToString("G4");
+                    if (_rows[i] == row) continue;
+                    if (double.TryParse(_rows[i].ProbBox.Text, out double p))
+                        _rows[i].ProbBox.Text = (p * scale).ToString("G4");
                 }
             }
             else if (n > 1)
             {
                 double even = remaining / (n - 1);
                 for (int i = 0; i < n; i++)
-                    if (i != idx) _probBoxes[i].Text = even.ToString("G4");
+                    if (_rows[i] != row) _rows[i].ProbBox.Text = even.ToString("G4");
             }
-            _probBoxes[idx].Text = newVal.ToString("G4");
+            row.ProbBox.Text = newVal.ToString("G4");
 
             double sum = 0;
-            foreach (var tb in _probBoxes)
-                if (double.TryParse(tb.Text, out double v)) sum += v;
+            foreach (var r in _rows)
+                if (double.TryParse(r.ProbBox.Text, out double v)) sum += v;
             bool ok = Math.Abs(sum - 1.0) < 1e-5;
             _warningBlock.Text       = ok ? "" : string.Format("⚠ Sum = {0:G4}, expected 1.0", sum);
             _warningBlock.Visibility = ok ? Visibility.Collapsed : Visibility.Visible;
@@ -208,10 +255,10 @@ namespace DecisionAnalysis
         private void SaveAndClose()
         {
             double sum = 0;
-            foreach (var tb in _probBoxes)
-                if (double.TryParse(tb.Text, out double v)) sum += v;
+            foreach (var r in _rows)
+                if (double.TryParse(r.ProbBox.Text, out double v)) sum += v;
 
-            if (Math.Abs(sum - 1.0) > 0.01)
+            if (_rows.Count > 0 && Math.Abs(sum - 1.0) > 0.01)
             {
                 MessageBox.Show(
                     string.Format("Probabilities sum to {0:G4}. Fix them before saving.", sum),
@@ -220,10 +267,13 @@ namespace DecisionAnalysis
                 return;
             }
 
-            for (int i = 0; i < _node.Outcomes.Count; i++)
+            _node.Outcomes.Clear();
+            foreach (var r in _rows)
             {
-                if (double.TryParse(_probBoxes[i].Text,  out double p)) _node.Outcomes[i].Probability = p;
-                if (double.TryParse(_valueBoxes[i].Text, out double v)) _node.Outcomes[i].Value       = v;
+                string name = r.NameBox.Text.Trim();
+                if (name.Length == 0) name = "outcome";
+                double.TryParse(r.ProbBox.Text, out double prob);
+                _node.Outcomes.Add(new Outcome(name, prob));
             }
             DialogResult = true;
         }
