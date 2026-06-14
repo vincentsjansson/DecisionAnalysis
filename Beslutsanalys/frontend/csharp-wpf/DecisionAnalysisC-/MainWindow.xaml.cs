@@ -114,17 +114,6 @@ namespace DecisionAnalysis
             (_rightCtx.Vm.Sequence as INotifyCollectionChanged).CollectionChanged += (s, e) =>
                 { _rightCtx.AutoFitPending = true; _rightCtx.Vm.ClearNodeEvValues(); };
 
-            var a = new TreeNode("A", NodeType.Chance);
-            a.Outcomes.Add(new Outcome("a1", 0.5) { Value = 100 });
-            a.Outcomes.Add(new Outcome("a2", 0.5) { Value = 50  });
-            var b = new TreeNode("B", NodeType.Chance);
-            b.Outcomes.Add(new Outcome("b1", 0.5) { Value = 200 });
-            b.Outcomes.Add(new Outcome("b2", 0.5) { Value = 75  });
-            var c = new TreeNode("C", NodeType.Chance);
-
-            _leftCtx.Vm.AddNode(a);
-            _leftCtx.Vm.AddNode(b);
-            _leftCtx.Vm.AddNode(c);
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
