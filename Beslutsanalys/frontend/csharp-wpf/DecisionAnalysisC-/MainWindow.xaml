@@ -65,11 +65,31 @@
 
             <Border Grid.Column="0" Background="#F5F5F5"
                     BorderBrush="#CCCCCC" BorderThickness="0,0,0,1">
-                <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                              VerticalScrollBarVisibility="Disabled">
-                    <StackPanel x:Name="SequencePanel" Orientation="Horizontal"
-                                VerticalAlignment="Center" Margin="24,0"/>
-                </ScrollViewer>
+                <DockPanel>
+                    <Button x:Name="BtnRunEv" DockPanel.Dock="Right"
+                            Content="▶ Run EV" Click="BtnRunEv_Click"
+                            Margin="8,0,8,0" Padding="12,5" FontSize="13"
+                            Background="White" Foreground="#1A1A1A"
+                            BorderBrush="#1A1A1A" BorderThickness="1"
+                            VerticalAlignment="Center" Cursor="Hand"/>
+<Button x:Name="BtnSave" DockPanel.Dock="Left"
+                            Content="💾 Save" Click="BtnSave_Click"
+                            Margin="8,0,0,0" Padding="12,5" FontSize="13"
+                            Background="White" Foreground="#1A1A1A"
+                            BorderBrush="#1A1A1A" BorderThickness="1"
+                            VerticalAlignment="Center" Cursor="Hand"/>
+                    <Button x:Name="BtnLoad" DockPanel.Dock="Left"
+                            Content="📂 Load" Click="BtnLoad_Click"
+                            Margin="4,0,0,0" Padding="12,5" FontSize="13"
+                            Background="White" Foreground="#1A1A1A"
+                            BorderBrush="#1A1A1A" BorderThickness="1"
+                            VerticalAlignment="Center" Cursor="Hand"/>
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="SequencePanel" Orientation="Horizontal"
+                                    VerticalAlignment="Center" Margin="24,0"/>
+                    </ScrollViewer>
+                </DockPanel>
             </Border>
 
             <Border Grid.Column="1" Background="#F5F5F5"
@@ -83,7 +103,7 @@
         </Grid>
 
         <!-- ── Tree canvases (left + right) ─────────────────────── -->
-        <Grid Grid.Row="1" x:Name="CanvasGrid">
+        <Grid Grid.Row="1" x:Name="CanvasGrid" ClipToBounds="True">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="0"/>
@@ -91,7 +111,7 @@
 
             <Canvas x:Name="TreeCanvas" Grid.Column="0" Background="#FFFFFF"
                     SizeChanged="TreeCanvas_SizeChanged"/>
-            <Canvas x:Name="RightTreeCanvas" Grid.Column="1" Background="#FFFFFF"
+            <Canvas x:Name="RightTreeCanvas" Grid.Column="1" Background="Transparent"
                     SizeChanged="RightTreeCanvas_SizeChanged"/>
         </Grid>
 

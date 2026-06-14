@@ -58,11 +58,14 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="BackwardFillDialog.cs" />
+    <Compile Include="LeafValueDialog.cs" />
     <Compile Include="Models\TreeModel.cs" />
     <Compile Include="ConditionalTableDialog.cs" />
     <Compile Include="EditOutcomesWindow.cs" />
     <Compile Include="OutcomeNameDialog.cs" />
     <Compile Include="Services\APIClient.cs" />
+    <Compile Include="Services\TreeSerializer.cs" />
     <Compile Include="ViewModels\TreeViewModel.cs" />
     <Page Include="MainWindow.xaml">
       <Generator>MSBuild:Compile</Generator>

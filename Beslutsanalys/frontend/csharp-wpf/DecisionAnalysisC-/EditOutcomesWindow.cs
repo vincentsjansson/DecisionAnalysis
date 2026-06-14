@@ -17,86 +17,75 @@ namespace DecisionAnalysis
             public Grid    Row;
         }
 
-        private readonly TreeNode          _node;
-        private readonly StackPanel        _rowsPanel;
-        private readonly TextBlock         _warningBlock;
+        private readonly TreeNode             _node;
+        private readonly StackPanel           _rowsPanel;
+        private readonly TextBlock            _warningBlock;
         private readonly List<OutcomeRowData> _rows = new List<OutcomeRowData>();
         private bool _updating;
 
         public EditOutcomesWindow(TreeNode node)
         {
-            _node = node;
+            _node  = node;
             Title  = "Edit outcomes — " + node.Name;
             Width  = 360;
-            SizeToContent = SizeToContent.Height;
+            SizeToContent         = SizeToContent.Height;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            ResizeMode  = ResizeMode.NoResize;
-            Background  = new SolidColorBrush(Color.FromRgb(0x1e, 0x1e, 0x2e));
-            Foreground  = Brushes.White;
-            FontFamily  = new FontFamily("Segoe UI");
+            ResizeMode            = ResizeMode.NoResize;
+            Background            = Brushes.White;
+            Foreground            = new SolidColorBrush(Color.FromRgb(0x1a, 0x1a, 0x1a));
+            FontFamily            = new FontFamily("Segoe UI");
 
             var root = new StackPanel { Margin = new Thickness(18) };
 
             root.Children.Add(new TextBlock
             {
-                Text = "Outcomes for '" + node.Name + "':",
-                Foreground = Brushes.White, FontSize = 13,
-                Margin = new Thickness(0, 0, 0, 10)
+                Text       = "Outcomes for '" + node.Name + "':",
+                Foreground = new SolidColorBrush(Color.FromRgb(0x1a, 0x1a, 0x1a)),
+                FontSize   = 13,
+                Margin     = new Thickness(0, 0, 0, 10)
             });
 
-            // Column headers
             var header = MakeGrid();
             AddHeaderCell(header, "Name", 0);
             AddHeaderCell(header, "Probability", 1);
             root.Children.Add(header);
 
-            // Rows panel — rows are added dynamically
             _rowsPanel = new StackPanel();
             root.Children.Add(_rowsPanel);
 
-            // Populate from existing outcomes
             foreach (var oc in node.Outcomes)
                 AppendRow(oc.Name, oc.Probability);
 
-            // Warning label
             _warningBlock = new TextBlock
             {
-                Text = "", Visibility = Visibility.Collapsed,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0x88, 0x44)),
-                FontSize = 11, Margin = new Thickness(0, 8, 0, 0)
+                Text       = "",
+                Visibility = Visibility.Collapsed,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xcc, 0x44, 0x00)),
+                FontSize   = 11,
+                Margin     = new Thickness(0, 8, 0, 0)
             };
             root.Children.Add(_warningBlock);
 
-            // + Add outcome button
             var addRow = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                Margin = new Thickness(0, 10, 0, 0)
+                Margin      = new Thickness(0, 10, 0, 0)
             };
-            var addBtn = new Button
-            {
-                Content = "+ Add outcome",
-                Background      = new SolidColorBrush(Color.FromRgb(0x2a, 0x2a, 0x3e)),
-                Foreground      = new SolidColorBrush(Color.FromRgb(0xa8, 0x98, 0xff)),
-                BorderBrush     = new SolidColorBrush(Color.FromRgb(0x7c, 0x6a, 0xf7)),
-                BorderThickness = new Thickness(1),
-                Padding         = new Thickness(10, 5, 10, 5),
-                FontSize        = 12, Cursor = Cursors.Hand
-            };
+            var addBtn = OutcomeNameDialog.MakeOutlineButton("+ Add outcome");
+            addBtn.Margin = new Thickness(0);
             addBtn.Click += (s, e) => AppendRow("", 0);
             addRow.Children.Add(addBtn);
             root.Children.Add(addRow);
 
-            // Save / Cancel buttons
             var btnRow = new StackPanel
             {
-                Orientation = Orientation.Horizontal,
+                Orientation         = Orientation.Horizontal,
                 HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 14, 0, 0)
+                Margin              = new Thickness(0, 14, 0, 0)
             };
-            var cancelBtn = ActionButton("Cancel", false);
+            var cancelBtn = OutcomeNameDialog.MakeOutlineButton("Cancel");
             cancelBtn.Click += (s, e) => Close();
-            var saveBtn = ActionButton("Save", true);
+            var saveBtn = OutcomeNameDialog.MakeOutlineButton("Save");
             saveBtn.Margin = new Thickness(8, 0, 0, 0);
             saveBtn.Click += (s, e) => SaveAndClose();
             btnRow.Children.Add(cancelBtn);
@@ -108,8 +97,6 @@ namespace DecisionAnalysis
 
         private void AppendRow(string name, double prob)
         {
-            int idx = _rows.Count;
-
             var nameBox = MakeBox(name);
             var probBox = MakeBox(prob.ToString("G4"));
 
@@ -119,19 +106,20 @@ namespace DecisionAnalysis
             Grid.SetColumn(probBox, 1);
             row.Children.Add(probBox);
 
-            // × remove button in col 2
             var removeTb = new TextBlock
             {
-                Text = "×", FontSize = 14, Cursor = Cursors.Hand,
-                Foreground = new SolidColorBrush(Color.FromArgb(0x66, 0xff, 0x88, 0x88)),
-                VerticalAlignment = VerticalAlignment.Center,
+                Text                = "×",
+                FontSize            = 14,
+                Cursor              = Cursors.Hand,
+                Foreground          = new SolidColorBrush(Color.FromRgb(0xbb, 0xbb, 0xbb)),
+                VerticalAlignment   = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(2, 0, 2, 0)
+                Margin              = new Thickness(2, 0, 2, 0)
             };
             removeTb.MouseEnter += (s, ev) =>
-                removeTb.Foreground = new SolidColorBrush(Color.FromArgb(0xff, 0xff, 0x88, 0x88));
+                removeTb.Foreground = new SolidColorBrush(Color.FromRgb(0xcc, 0x33, 0x33));
             removeTb.MouseLeave += (s, ev) =>
-                removeTb.Foreground = new SolidColorBrush(Color.FromArgb(0x66, 0xff, 0x88, 0x88));
+                removeTb.Foreground = new SolidColorBrush(Color.FromRgb(0xbb, 0xbb, 0xbb));
             Grid.SetColumn(removeTb, 2);
             row.Children.Add(removeTb);
 
@@ -153,11 +141,8 @@ namespace DecisionAnalysis
         {
             _rows.Remove(data);
             _rowsPanel.Children.Remove(data.Row);
-            // Re-wire indices for normalization by rebuilding event references is not
-            // possible after the fact, so NormalizeOthers uses _rows index lookup instead.
         }
 
-        // Grid with 3 columns: Name (star) | Prob (80px) | × (28px)
         private Grid MakeGrid()
         {
             var g = new Grid { Margin = new Thickness(0, 3, 0, 0) };
@@ -172,9 +157,10 @@ namespace DecisionAnalysis
         {
             var tb = new TextBlock
             {
-                Text = text, FontSize = 11,
-                Foreground = new SolidColorBrush(Color.FromArgb(0x99, 0xff, 0xff, 0xff)),
-                Margin = new Thickness(2, 0, 2, 4)
+                Text       = text,
+                FontSize   = 11,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x88, 0x88, 0x88)),
+                Margin     = new Thickness(2, 0, 2, 4)
             };
             Grid.SetColumn(tb, col);
             g.Children.Add(tb);
@@ -182,28 +168,16 @@ namespace DecisionAnalysis
 
         private TextBox MakeBox(string text) => new TextBox
         {
-            Text = text,
-            Background      = new SolidColorBrush(Color.FromRgb(0x2a, 0x2a, 0x3e)),
-            Foreground      = Brushes.White,
-            CaretBrush      = Brushes.White,
-            BorderBrush     = new SolidColorBrush(Color.FromRgb(0x7c, 0x6a, 0xf7)),
+            Text            = text,
+            Background      = Brushes.White,
+            Foreground      = new SolidColorBrush(Color.FromRgb(0x1a, 0x1a, 0x1a)),
+            CaretBrush      = new SolidColorBrush(Color.FromRgb(0x1a, 0x1a, 0x1a)),
+            BorderBrush     = new SolidColorBrush(Color.FromRgb(0x1a, 0x1a, 0x1a)),
             BorderThickness = new Thickness(1),
             Padding         = new Thickness(5, 3, 5, 3),
-            FontSize        = 12, Margin = new Thickness(2, 0, 2, 0),
+            FontSize        = 12,
+            Margin          = new Thickness(2, 0, 2, 0),
             FontFamily      = new FontFamily("Segoe UI")
-        };
-
-        private Button ActionButton(string label, bool primary) => new Button
-        {
-            Content         = label,
-            Background      = primary
-                ? new SolidColorBrush(Color.FromRgb(0x7c, 0x6a, 0xf7))
-                : new SolidColorBrush(Color.FromRgb(0x2a, 0x2a, 0x3e)),
-            Foreground      = Brushes.White,
-            BorderBrush     = new SolidColorBrush(Color.FromRgb(0x7c, 0x6a, 0xf7)),
-            BorderThickness = new Thickness(1),
-            Padding         = new Thickness(16, 7, 16, 7),
-            FontSize        = 13, Cursor = Cursors.Hand
         };
 
         private void NormalizeOthers(OutcomeRowData row, string rawText)

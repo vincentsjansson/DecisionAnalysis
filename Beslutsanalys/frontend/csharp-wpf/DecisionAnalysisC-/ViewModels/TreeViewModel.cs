@@ -119,6 +119,36 @@ namespace DecisionAnalysis.ViewModels
             Notify();
         }
 
+        public Dictionary<string, double> LeafValues = new Dictionary<string, double>();
+
+        public void SetLeafValue(string path, double value)
+        {
+            LeafValues[path] = value;
+            Notify();
+        }
+
+        public double GetLeafValue(string path)
+        {
+            return LeafValues.TryGetValue(path, out var v) ? v : 0.0;
+        }
+
+        public Dictionary<string, double> NodeEvValues = new Dictionary<string, double>();
+
+        public void SetNodeEv(string path, double ev)
+        {
+            NodeEvValues[path] = ev;
+        }
+
+        public double? GetNodeEv(string path)
+        {
+            return NodeEvValues.TryGetValue(path, out var v) ? v : (double?)null;
+        }
+
+        public void ClearNodeEvValues()
+        {
+            NodeEvValues.Clear();
+        }
+
         public void ForceNotify() => Notify();
 
         public void SetNodeType(TreeNode node, NodeType type)

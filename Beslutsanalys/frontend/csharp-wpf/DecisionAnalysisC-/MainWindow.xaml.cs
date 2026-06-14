@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -10,7 +11,10 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Shapes;
+using DecisionAnalysis.Models;
+using DecisionAnalysis.Services;
 using DecisionAnalysis.ViewModels;
+using Microsoft.Win32;
 
 namespace DecisionAnalysis
 {
@@ -23,7 +27,8 @@ namespace DecisionAnalysis
         const double VPad        = 48;
         const double EdgeFan     = 32.0;
         const double MinNodeW    = 80;
-        const double LeafLabelW  = 150;   // estimated width of leaf label panel (flipped anchor)
+        const double LeafLabelW    = 150;   // estimated width of leaf label panel (flipped anchor)
+        const double MinLeafSpacing = 80.0;  // minimum px between leaf Y centers
         static readonly Color EdgeColor  = Color.FromRgb(0x55, 0x55, 0x55);
         static readonly Color NodeBg     = Color.FromRgb(0x1a, 0x1a, 0x1a);
         static readonly Color NodeBorder = Color.FromRgb(0x1a, 0x1a, 0x1a);
@@ -68,11 +73,25 @@ namespace DecisionAnalysis
                 = new List<(Outcome, RenderNode)>();
         }
 
+        // ── Leaf tag ────────────────────────────────────────────────────────────────
+        private sealed class LeafTag
+        {
+            public readonly RenderNode Rn;
+            public readonly string     PathKey;
+            public readonly TreeCtx    Ctx;
+            public readonly double     JointProbability;
+            public LeafTag(RenderNode rn, string pathKey, TreeCtx ctx, double jointProbability)
+            { Rn = rn; PathKey = pathKey; Ctx = ctx; JointProbability = jointProbability; }
+        }
+
         // ── State ──────────────────────────────────────────────────────────────────
-        private readonly TreeCtx _leftCtx  = new TreeCtx { IsFlipped = false };
-        private readonly TreeCtx _rightCtx = new TreeCtx { IsFlipped = true  };
+        private readonly TreeCtx  _leftCtx  = new TreeCtx { IsFlipped = false };
+        private readonly TreeCtx  _rightCtx = new TreeCtx { IsFlipped = true  };
+        private readonly ApiClient _api      = new ApiClient();
         private bool           _isSplit;
-        private List<TreeNode> _preFlipSnapshot;   // deep copy of left VM before flip
+        private List<TreeNode>              _preFlipSnapshot;    // deep copy of left VM before flip
+        private Dictionary<string, double> _preFlipLeafValues;    // snapshot of left LeafValues before flip
+        private Dictionary<string, double> _preFlipNodeEvValues;  // snapshot of left NodeEvValues before flip
         private TreeNode       _popupTargetNode;
         private TreeCtx        _popupCtx;
         private bool           _loaded;
@@ -90,10 +109,10 @@ namespace DecisionAnalysis
             _rightCtx.Vm.TreeChanged += (s, e) => OnVmChanged(_rightCtx);
 
             // Auto-fit fires only on structural changes (add/remove/move), not on data edits
-            (_leftCtx.Vm.Sequence  as INotifyCollectionChanged).CollectionChanged
-                += (s, e) => _leftCtx.AutoFitPending  = true;
-            (_rightCtx.Vm.Sequence as INotifyCollectionChanged).CollectionChanged
-                += (s, e) => _rightCtx.AutoFitPending = true;
+            (_leftCtx.Vm.Sequence  as INotifyCollectionChanged).CollectionChanged += (s, e) =>
+                { _leftCtx.AutoFitPending  = true; _leftCtx.Vm.ClearNodeEvValues();  };
+            (_rightCtx.Vm.Sequence as INotifyCollectionChanged).CollectionChanged += (s, e) =>
+                { _rightCtx.AutoFitPending = true; _rightCtx.Vm.ClearNodeEvValues(); };
 
             var a = new TreeNode("A", NodeType.Chance);
             a.Outcomes.Add(new Outcome("a1", 0.5) { Value = 100 });
@@ -228,13 +247,23 @@ namespace DecisionAnalysis
             ctx.SeqPanel.Children.Clear();
             var seq = ctx.Vm.Sequence;
 
-            for (int i = 0; i < seq.Count; i++)
+            // For the flipped tree, iterate in reverse so pills appear in the same
+            // left-to-right order as nodes appear in the tree canvas.
+            bool rev   = ctx.IsFlipped;
+            int  start = rev ? seq.Count - 1 : 0;
+            int  end   = rev ? -1             : seq.Count;
+            int  delta = rev ? -1             : +1;
+
+            for (int i = start; i != end; i += delta)
             {
                 var  node = seq[i];
                 bool sel  = node == ctx.SelectedNode;
 
-                if (sel && i > 0)
-                    ctx.SeqPanel.Children.Add(MakeArrowButton("←", ctx, node, -1));
+                // Left arrow moves this pill visually left.
+                // Reversed: left in bar = higher seq index → MoveRight (+1); condition i < Count-1
+                // Forward:  left in bar = lower  seq index → MoveLeft  (-1); condition i > 0
+                if (sel && (rev ? i < seq.Count - 1 : i > 0))
+                    ctx.SeqPanel.Children.Add(MakeArrowButton("←", ctx, node, rev ? +1 : -1));
 
                 var inner = new StackPanel
                 {
@@ -268,10 +297,15 @@ namespace DecisionAnalysis
                 };
                 ctx.SeqPanel.Children.Add(pill);
 
-                if (sel && i < seq.Count - 1)
-                    ctx.SeqPanel.Children.Add(MakeArrowButton("→", ctx, node, +1));
+                // Right arrow moves this pill visually right.
+                // Reversed: right in bar = lower  seq index → MoveLeft  (-1); condition i > 0
+                // Forward:  right in bar = higher seq index → MoveRight (+1); condition i < Count-1
+                if (sel && (rev ? i > 0 : i < seq.Count - 1))
+                    ctx.SeqPanel.Children.Add(MakeArrowButton("→", ctx, node, rev ? -1 : +1));
 
-                if (i < seq.Count - 1)
+                // Separator after every pill except the last one displayed.
+                bool lastDisplayed = rev ? i == 0 : i == seq.Count - 1;
+                if (!lastDisplayed)
                     ctx.SeqPanel.Children.Add(new TextBlock
                     {
                         Text = "—",
@@ -360,7 +394,9 @@ namespace DecisionAnalysis
                 CanvasGrid.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
 
                 // Snapshot left VM so we can restore it exactly on merge
-                _preFlipSnapshot = _leftCtx.Vm.Sequence.Select(n => DeepCopyNode(n)).ToList();
+                _preFlipSnapshot     = _leftCtx.Vm.Sequence.Select(n => DeepCopyNode(n)).ToList();
+                _preFlipLeafValues   = new Dictionary<string, double>(_leftCtx.Vm.LeafValues);
+                _preFlipNodeEvValues = new Dictionary<string, double>(_leftCtx.Vm.NodeEvValues);
 
                 // Populate right VM with deep copies of left sequence (reversed)
                 while (_rightCtx.Vm.Sequence.Count > 0)
@@ -370,16 +406,27 @@ namespace DecisionAnalysis
                 ResetZoom(_rightCtx);
                 foreach (var node in _leftCtx.Vm.Sequence.Reverse().Select(n => DeepCopyNode(n)).ToList())
                     _rightCtx.Vm.AddNode(node);
+
+                // Copy leaf values with reversed path keys (right sequence is reversed)
+                _rightCtx.Vm.LeafValues.Clear();
+                foreach (var kv in _leftCtx.Vm.LeafValues)
+                {
+                    var parts = kv.Key.Split(',');
+                    System.Array.Reverse(parts);
+                    _rightCtx.Vm.LeafValues[string.Join(",", parts)] = kv.Value;
+                }
+
+                // Copy node EV values as-is (right tree starts with no EV until Run EV is called)
+                _rightCtx.Vm.NodeEvValues = new Dictionary<string, double>(_leftCtx.Vm.NodeEvValues);
             }
             else
             {
                 SeqBarGrid.ColumnDefinitions[1].Width = new GridLength(0);
                 CanvasGrid.ColumnDefinitions[1].Width = new GridLength(0);
 
-                foreach (var el in _rightCtx.EdgeElements) RightTreeCanvas.Children.Remove(el);
-                _rightCtx.EdgeElements.Clear();
-                foreach (var el in _rightCtx.VisualMap.Values) RightTreeCanvas.Children.Remove(el);
+                RightTreeCanvas.Children.Clear();
                 _rightCtx.VisualMap.Clear();
+                _rightCtx.EdgeElements.Clear();
                 RightSequencePanel.Children.Clear();
                 _rightCtx.SelectedNode = null;
 
@@ -392,6 +439,14 @@ namespace DecisionAnalysis
                         _leftCtx.Vm.AddNode(node);
                     _preFlipSnapshot = null;
                 }
+                _leftCtx.Vm.LeafValues = _preFlipLeafValues != null
+                    ? new Dictionary<string, double>(_preFlipLeafValues)
+                    : new Dictionary<string, double>();
+                _preFlipLeafValues = null;
+                _leftCtx.Vm.NodeEvValues = _preFlipNodeEvValues != null
+                    ? new Dictionary<string, double>(_preFlipNodeEvValues)
+                    : new Dictionary<string, double>();
+                _preFlipNodeEvValues = null;
             }
 
             _leftCtx.VisualMap.Clear();
@@ -410,6 +465,8 @@ namespace DecisionAnalysis
             return Math.Max(MinNodeW, ft.Width + 36);
         }
 
+        private double GetNodeWidth(TreeNode node) => GetNodeWidth(node.Name);
+
         private void ComputeColumnXs(TreeCtx ctx, double canvasW)
         {
             var seq = ctx.Vm.Sequence;
@@ -417,13 +474,25 @@ namespace DecisionAnalysis
             double x = StartX;
             for (int i = 0; i < seq.Count; i++)
             {
-                double hw = GetNodeWidth(seq[i].Name) / 2;
+                double hw = GetNodeWidth(seq[i]) / 2;
                 x += hw; ctx.ColumnXs[i] = x; x += hw + ColGap;
             }
             ctx.ColumnXs[seq.Count] = x + 20;
             if (ctx.IsFlipped)
                 for (int i = 0; i <= seq.Count; i++)
                     ctx.ColumnXs[i] = canvasW - ctx.ColumnXs[i];
+        }
+
+        private static int CountLeaves(TreeCtx ctx)
+        {
+            int count = 1;
+            foreach (var node in ctx.Vm.Sequence)
+            {
+                int oc = node.Outcomes.Count;
+                if (oc == 0) break;
+                count *= oc;
+            }
+            return Math.Max(1, count);
         }
 
         // ── Build render tree ──────────────────────────────────────────────────────
@@ -464,7 +533,7 @@ namespace DecisionAnalysis
 
             if (rn.Data.Outcomes.Count == 0)
             {
-                double hw    = GetNodeWidth(rn.Data.Name) / 2;
+                double hw    = GetNodeWidth(rn.Data) / 2;
                 double leafX = ctx.IsFlipped
                     ? rn.Position.X - hw - ColGap / 2
                     : rn.Position.X + hw + ColGap / 2;
@@ -516,80 +585,40 @@ namespace DecisionAnalysis
             ctx.CanvasW = ctx.Canvas.ActualWidth  > 0 ? ctx.Canvas.ActualWidth  : 900;
             double canvasH = ctx.Canvas.ActualHeight > 0 ? ctx.Canvas.ActualHeight : 500;
 
-            if (ctx.Vm.Sequence.Count == 0)
-            {
-                foreach (var k in ctx.VisualMap.Keys.ToList())
-                    ctx.Canvas.Children.Remove(ctx.VisualMap[k]);
-                ctx.VisualMap.Clear();
-                foreach (var el in ctx.EdgeElements) ctx.Canvas.Children.Remove(el);
-                ctx.EdgeElements.Clear();
-                return;
-            }
+            // Full clear — idempotent; calling twice produces identical canvas state.
+            ctx.Canvas.Children.Clear();
+            ctx.VisualMap.Clear();
+            ctx.EdgeElements.Clear();
+
+            if (ctx.Vm.Sequence.Count == 0) return;
 
             ComputeColumnXs(ctx, ctx.CanvasW);
-            var root = BuildRenderNode(ctx, 0, VPad, canvasH - VPad, "", null, 1.0, new List<string>(), new List<string>());
+            double ySpan = Math.Max(canvasH - 2 * VPad, CountLeaves(ctx) * MinLeafSpacing);
+            var root = BuildRenderNode(ctx, 0, VPad, VPad + ySpan, "", null, 1.0, new List<string>(), new List<string>());
             var all  = new List<RenderNode>();
             CollectNodes(root, all);
-            var newKeys = new HashSet<string>(all.Select(rn => rn.Key));
 
             var dur  = new Duration(TimeSpan.FromMilliseconds(300));
             var ease = new QuadraticEase { EasingMode = EasingMode.EaseInOut };
 
-            foreach (var k in ctx.VisualMap.Keys.Except(newKeys).ToList())
-            {
-                ctx.Canvas.Children.Remove(ctx.VisualMap[k]);
-                ctx.VisualMap.Remove(k);
-            }
-
             foreach (var rn in all)
             {
-                bool existingIsLeaf = ctx.VisualMap.ContainsKey(rn.Key)
-                    && ctx.VisualMap[rn.Key] is StackPanel;
-                bool typeMatch = ctx.VisualMap.ContainsKey(rn.Key)
-                    && (existingIsLeaf == rn.IsLeaf);
-
-                double nodeW = rn.IsLeaf ? 0 : GetNodeWidth(rn.Data.Name);
+                double nodeW = rn.IsLeaf ? 0 : GetNodeWidth(rn.Data);
                 double tLeft = rn.IsLeaf
                     ? (ctx.IsFlipped ? rn.Position.X - LeafLabelW : rn.Position.X)
                     : rn.Position.X - nodeW / 2;
                 double tTop  = rn.IsLeaf ? rn.Position.Y - 24 : rn.Position.Y - NodeH / 2;
 
-                if (typeMatch)
-                {
-                    var el = ctx.VisualMap[rn.Key];
-                    if (!rn.IsLeaf) { var b = el as Border; b.Width = nodeW; ApplyNodeStyle(b, rn.Data); }
-                    else UpdateLeafVisual(ctx, el, rn);
-
-                    double cLeft = Canvas.GetLeft(el), cTop = Canvas.GetTop(el);
-                    if (Math.Abs(cLeft - tLeft) > 0.5 || Math.Abs(cTop - tTop) > 0.5)
-                    {
-                        double dx = cLeft - tLeft, dy = cTop - tTop;
-                        Canvas.SetLeft(el, tLeft); Canvas.SetTop(el, tTop);
-                        var xf = new TranslateTransform(dx, dy);
-                        el.RenderTransform = xf;
-                        xf.BeginAnimation(TranslateTransform.XProperty,
-                            new DoubleAnimation(dx, 0, dur) { EasingFunction = ease });
-                        xf.BeginAnimation(TranslateTransform.YProperty,
-                            new DoubleAnimation(dy, 0, dur) { EasingFunction = ease });
-                    }
-                }
-                else
-                {
-                    if (ctx.VisualMap.ContainsKey(rn.Key))
-                    {
-                        ctx.Canvas.Children.Remove(ctx.VisualMap[rn.Key]);
-                        ctx.VisualMap.Remove(rn.Key);
-                    }
-                    FrameworkElement el = rn.IsLeaf
-                        ? (FrameworkElement)CreateLeafVisual(ctx, rn)
-                        : CreateNodeVisual(ctx, rn);
-                    Canvas.SetLeft(el, tLeft); Canvas.SetTop(el, tTop);
-                    el.Opacity = 0;
-                    ctx.Canvas.Children.Add(el);
-                    ctx.VisualMap[rn.Key] = el;
-                    el.BeginAnimation(OpacityProperty,
-                        new DoubleAnimation(0, 1, dur) { EasingFunction = ease });
-                }
+                FrameworkElement el = rn.IsLeaf
+                    ? (FrameworkElement)CreateLeafVisual(ctx, rn)
+                    : CreateNodeVisual(ctx, rn);
+                Canvas.SetLeft(el, tLeft);
+                Canvas.SetTop(el, tTop);
+                el.Opacity = 0;
+                ctx.Canvas.Children.Add(el);
+                ctx.VisualMap[rn.Key] = el;
+                el.BeginAnimation(OpacityProperty,
+                    new DoubleAnimation(0, 1, dur) { EasingFunction = ease });
             }
 
             RedrawEdges(ctx, all);
@@ -619,7 +648,7 @@ namespace DecisionAnalysis
                 }
                 else if (rn.Data != null)
                 {
-                    double hw = GetNodeWidth(rn.Data.Name) / 2;
+                    double hw = GetNodeWidth(rn.Data) / 2;
                     l = rn.Position.X - hw;
                     r = rn.Position.X + hw;
                     t = rn.Position.Y - NodeH / 2;
@@ -650,19 +679,20 @@ namespace DecisionAnalysis
         {
             var b = new Border
             {
-                Width  = GetNodeWidth(rn.Data.Name), Height = NodeH,
+                Width  = GetNodeWidth(rn.Data), Height = NodeH,
                 Tag    = new object[] { rn.Data, ctx }, Cursor = Cursors.Hand,
                 Effect = new DropShadowEffect
                     { Color = Colors.Black, BlurRadius = 6, Opacity = 0.12, ShadowDepth = 2 }
             };
-            ApplyNodeStyle(b, rn.Data);
+            ApplyNodeStyle(b, rn.Data, string.Join(",", rn.PathNames), ctx);
             b.MouseLeftButtonUp += OnNodeClicked;
             return b;
         }
 
         private StackPanel CreateLeafVisual(TreeCtx ctx, RenderNode rn)
         {
-            double value   = rn.IncomingOC?.Value ?? 0;
+            string leafKey = string.Join(",", rn.PathNames);
+            double value   = rn.IncomingOC != null ? ctx.Vm.GetLeafValue(leafKey) : 0.0;
             double jp      = rn.JointProbability;
             double ev      = value * jp;
             string pathStr = "[" + string.Join(", ", rn.PathNames) + "]";
@@ -670,7 +700,7 @@ namespace DecisionAnalysis
             var outer = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                Tag = new object[] { rn, ctx }, Cursor = Cursors.Hand
+                Tag = new LeafTag(rn, leafKey, ctx, jp), Cursor = Cursors.Hand
             };
 
             var arrowTb = new TextBlock
@@ -737,10 +767,11 @@ namespace DecisionAnalysis
             if (outer.Children[arrowIdx] is TextBlock arrow)
                 arrow.Text = ctx.IsFlipped ? "◁" : "▷";
 
-            double value   = rn.IncomingOC?.Value ?? 0;
-            double jp      = rn.JointProbability;
-            double ev      = value * jp;
-            string pathStr = "[" + string.Join(", ", rn.PathNames) + "]";
+            string leafKey2 = string.Join(",", rn.PathNames);
+            double value    = rn.IncomingOC != null ? ctx.Vm.GetLeafValue(leafKey2) : 0.0;
+            double jp       = rn.JointProbability;
+            double ev       = value * jp;
+            string pathStr  = "[" + string.Join(", ", rn.PathNames) + "]";
 
             if (outer.Children[infoIdx] is StackPanel info && info.Children.Count >= 4)
             {
@@ -749,10 +780,10 @@ namespace DecisionAnalysis
                 if (info.Children[2] is TextBlock pt) pt.Text = "p=" + jp.ToString("G3");
                 if (info.Children[3] is TextBlock et) et.Text = "EV=" + ev.ToString("G4");
             }
-            outer.Tag = new object[] { rn, ctx };
+            outer.Tag = new LeafTag(rn, string.Join(",", rn.PathNames), ctx, rn.JointProbability);
         }
 
-        private void ApplyNodeStyle(Border b, TreeNode node)
+        private void ApplyNodeStyle(Border b, TreeNode node, string pathKey, TreeCtx ctx)
         {
             if (b == null || node == null) return;
             b.Background      = new SolidColorBrush(NodeBg);
@@ -760,13 +791,190 @@ namespace DecisionAnalysis
             b.BorderThickness = new Thickness(1.5);
             b.CornerRadius    = node.NodeType == NodeType.Decision
                 ? new CornerRadius(3) : new CornerRadius(22);
-            b.Child = new TextBlock
+
+            var ev = ctx.Vm.GetNodeEv(pathKey);
+            if (ev.HasValue)
             {
-                Text = node.Name, Foreground = Brushes.White,
-                FontSize = 14, FontWeight = FontWeights.SemiBold,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment   = VerticalAlignment.Center
+                var sp = new StackPanel
+                {
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment   = VerticalAlignment.Center
+                };
+                sp.Children.Add(new TextBlock
+                {
+                    Text = node.Name, Foreground = Brushes.White,
+                    FontSize = 14, FontWeight = FontWeights.SemiBold,
+                    HorizontalAlignment = HorizontalAlignment.Center
+                });
+                sp.Children.Add(new TextBlock
+                {
+                    Text = $"EV: {ev.Value:G4}",
+                    Foreground = new SolidColorBrush(Color.FromRgb(0xaa, 0xaa, 0xaa)),
+                    FontSize = 9, HorizontalAlignment = HorizontalAlignment.Center
+                });
+                b.Child = sp;
+            }
+            else
+            {
+                b.Child = new TextBlock
+                {
+                    Text = node.Name, Foreground = Brushes.White,
+                    FontSize = 14, FontWeight = FontWeights.SemiBold,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment   = VerticalAlignment.Center
+                };
+            }
+        }
+
+        private void MergeEv(TreeNodeDto source, TreeCtx ctx, List<string> pathSoFar)
+        {
+            if (source == null) return;
+            string key = string.Join(",", pathSoFar);
+
+            if (source.Ev.HasValue)
+                ctx.Vm.SetNodeEv(key, source.Ev.Value);
+
+            if (source.Outcomes == null) return;
+
+            // Update probabilities on the shared Outcome objects at this depth
+            int depth = pathSoFar.Count;
+            if (depth < ctx.Vm.Sequence.Count)
+            {
+                var node = ctx.Vm.Sequence[depth];
+                foreach (var soc in source.Outcomes)
+                {
+                    var toc = node.Outcomes.FirstOrDefault(o => o.Name == soc.Name);
+                    if (toc != null) toc.Probability = soc.Probability;
+                }
+            }
+
+            foreach (var soc in source.Outcomes)
+            {
+                if (soc.Child != null)
+                {
+                    var nextPath = new List<string>(pathSoFar);
+                    nextPath.Add(soc.Name);
+                    MergeEv(soc.Child, ctx, nextPath);
+                }
+            }
+        }
+
+        private async Task RunEvAndRedrawAsync(TreeCtx ctx)
+        {
+            var root = ctx.Vm.GetRootNode();
+            if (root == null) return;
+            var dto = DtoConverter.ToDto(root, ctx.Vm.LeafValues, new List<string>());
+            BtnRunEv.IsEnabled = false;
+            BtnRunEv.Content   = "Computing…";
+            try
+            {
+                var resp = await _api.RunEvAsync(new EVRequestDto { Tree = dto });
+                ctx.Vm.ClearNodeEvValues();
+                MergeEv(resp.Tree, ctx, new List<string>());
+                ctx.Vm.ForceNotify();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("EV failed: " + ex.Message, "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                BtnRunEv.IsEnabled = true;
+                BtnRunEv.Content   = "▶ Run EV";
+            }
+        }
+
+        private void BtnRunEv_Click(object sender, RoutedEventArgs e)
+        {
+            _ = RunEvAndRedrawAsync(_leftCtx);
+        }
+
+        private void MergeProbabilities(TreeNodeDto source, TreeCtx ctx)
+        {
+            void Merge(TreeNodeDto src, int depth)
+            {
+                if (depth >= ctx.Vm.Sequence.Count) return;
+                var node = ctx.Vm.Sequence[depth];
+                if (src.Outcomes == null) return;
+                foreach (var soc in src.Outcomes)
+                {
+                    var toc = node.Outcomes.FirstOrDefault(o => o.Name == soc.Name);
+                    if (toc != null)
+                        toc.Probability = soc.Probability;
+                    if (soc.Child != null)
+                        Merge(soc.Child, depth + 1);
+                }
+            }
+            Merge(source, 0);
+        }
+
+        private async Task RunBackwardForLeaf(LeafTag tag, double jointProb, TreeCtx ctx)
+        {
+            var root = ctx.Vm.GetRootNode();
+            if (root == null) return;
+            var pathList = tag.PathKey.Split(',').Select(s => s.Trim()).ToList();
+            var req = new BackwardRequestDto
+            {
+                Tree             = DtoConverter.ToDto(root, ctx.Vm.LeafValues, new List<string>()),
+                Path             = pathList,
+                FinalProbability = jointProb
             };
+            try
+            {
+                var resp = await _api.RunBackwardAsync(req);
+                System.Diagnostics.Debug.WriteLine(
+                    "=== Raw backward response ===\n" +
+                    Newtonsoft.Json.JsonConvert.SerializeObject(resp.Tree,
+                        Newtonsoft.Json.Formatting.Indented));
+                MergeProbabilities(resp.Tree, ctx);
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine("=== MergeProbabilities result ===");
+                foreach (var node in ctx.Vm.Sequence)
+                {
+                    sb.AppendLine($"Node: {node.Name}");
+                    foreach (var oc in node.Outcomes)
+                        sb.AppendLine($"  {oc.Name}: {oc.Probability:G4}");
+                }
+                System.Diagnostics.Debug.WriteLine(sb.ToString());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Backward fill failed: " + ex.Message, "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+private void BtnSave_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new SaveFileDialog { Filter = "Decision Tree (*.json)|*.json" };
+            if (dlg.ShowDialog() == true)
+            {
+                try   { TreeSerializer.Save(_leftCtx.Vm, dlg.FileName); }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Save failed: " + ex.Message, "Error",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+        }
+
+        private void BtnLoad_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new OpenFileDialog { Filter = "Decision Tree (*.json)|*.json" };
+            if (dlg.ShowDialog() == true)
+            {
+                try
+                {
+                    TreeSerializer.Load(dlg.FileName, _leftCtx.Vm);
+                    _leftCtx.Vm.ClearNodeEvValues();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Load failed: " + ex.Message, "Error",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
         }
 
         // ── Edges ──────────────────────────────────────────────────────────────────
@@ -778,7 +986,7 @@ namespace DecisionAnalysis
             foreach (var rn in all.Where(n => !n.IsLeaf && n.Data != null && n.Children.Count > 0))
             {
                 int    total      = rn.Children.Count;
-                double hw         = GetNodeWidth(rn.Data.Name) / 2;
+                double hw         = GetNodeWidth(rn.Data) / 2;
                 bool   isDecision = rn.Data.NodeType == NodeType.Decision;
 
                 for (int i = 0; i < total; i++)
@@ -790,7 +998,7 @@ namespace DecisionAnalysis
                     double srcX   = ctx.IsFlipped ? rn.Position.X - hw : rn.Position.X + hw;
                     double srcY   = rn.Position.Y - spread / 2 + i * EdgeFan;
 
-                    double childHw = child.IsLeaf ? 0 : GetNodeWidth(child.Data.Name) / 2;
+                    double childHw = child.IsLeaf ? 0 : GetNodeWidth(child.Data) / 2;
                     double dstX    = child.IsLeaf
                         ? (ctx.IsFlipped ? child.Position.X + 20 : child.Position.X - 20)
                         : (ctx.IsFlipped ? child.Position.X + childHw : child.Position.X - childHw);
@@ -840,20 +1048,27 @@ namespace DecisionAnalysis
         }
 
         // ── Click handlers ──────────────────────────────────────────────────────────
-        private void OnLeafClicked(object sender, MouseButtonEventArgs e)
+        private async void OnLeafClicked(object sender, MouseButtonEventArgs e)
         {
             if (!(sender is StackPanel sp)) return;
-            if (!(sp.Tag is object[] tag) || tag.Length < 2) return;
-            if (!(tag[0] is RenderNode rn) || rn.IncomingOC == null) return;
-            if (!(tag[1] is TreeCtx ctx)) return;
+            if (!(sp.Tag is LeafTag tag)) return;
+            if (tag.Rn.IncomingOC == null) return;
             e.Handled = true;
-            var dlg = new OutcomeNameDialog("Outcome value:", "Set Value") { Owner = this };
-            dlg.SetInitialText(rn.IncomingOC.Value.ToString("G4"));
-            if (dlg.ShowDialog() == true && double.TryParse(dlg.OutcomeName, out double v))
-            {
-                rn.IncomingOC.Value = v;
-                ctx.Vm.ForceNotify();
-            }
+
+            string title        = "[" + string.Join(", ", tag.Rn.PathNames) + "]";
+            double currentValue = tag.Ctx.Vm.GetLeafValue(tag.PathKey);
+            var dlg = new LeafValueDialog(title, currentValue, tag.JointProbability)
+                { Owner = this };
+            if (dlg.ShowDialog() != true) return;
+
+            if (dlg.NewValue.HasValue)
+                tag.Ctx.Vm.SetLeafValue(tag.PathKey, dlg.NewValue.Value);
+
+            if (dlg.NewJointProbability.HasValue)
+                await RunBackwardForLeaf(tag, dlg.NewJointProbability.Value, tag.Ctx);
+
+            tag.Ctx.Vm.ForceNotify();
+            RenderTree(tag.Ctx);
         }
 
         private void OpenNodePopup(TreeNode node, TreeCtx ctx)
@@ -888,6 +1103,7 @@ namespace DecisionAnalysis
         {
             NodePopup.IsOpen = false;
             if (_popupTargetNode == null || _popupCtx == null) return;
+            _popupCtx.Vm.ClearNodeEvValues();
             _popupCtx.Vm.SetNodeType(_popupTargetNode,
                 _popupTargetNode.NodeType == NodeType.Chance
                     ? NodeType.Decision : NodeType.Chance);
@@ -899,7 +1115,10 @@ namespace DecisionAnalysis
             if (_popupTargetNode == null || _popupCtx == null) return;
             var win = new EditOutcomesWindow(_popupTargetNode) { Owner = this };
             if (win.ShowDialog() == true)
+            {
+                _popupCtx.Vm.ClearNodeEvValues();
                 _popupCtx.Vm.ForceNotify();
+            }
         }
 
         private void BtnEditConditionals_Click(object sender, RoutedEventArgs e)

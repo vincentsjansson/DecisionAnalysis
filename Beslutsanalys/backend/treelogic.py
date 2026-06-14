@@ -145,50 +145,84 @@ def solve_node_probabilities(node):
     )
 
 def backward_fill_along_path(root: TreeNode, path: list[str], final_probability: float):
-    # 1. Walk forward collecting (node, outcome) pairs, applying conditional tables
-    chain = []
+    if final_probability <= 0.0 or final_probability > 1.0:
+        raise ValueError(
+            f"final_probability must be in (0, 1], got {final_probability}"
+        )
+
+    # 1. Walk forward collecting (node, outcome) pairs, applying conditional tables.
+    chain: list[tuple[TreeNode, "Outcome"]] = []
     node = root
-    history = set()
+    history: set[str] = set()
 
     for outcome_name in path:
         node.apply_conditional_probabilities(history)
 
-        total = sum(o.probability for o in node.outcomes)
-        if total > 0:
-            for o in node.outcomes:
-                o.probability /= total
-
         match = next((o for o in node.outcomes if o.name == outcome_name), None)
         if match is None:
-            raise ValueError(f"Outcome '{outcome_name}' not found in node '{node.name}'")
+            raise ValueError(
+                f"Outcome '{outcome_name}' not found in node '{node.name}'"
+            )
 
         chain.append((node, match))
         history.add(outcome_name)
         node = match.child
 
-    # 2. Solve unknowns backward — None or 0.0 both treated as unknown
-    for i in reversed(range(len(chain))):
-        node, outcome = chain[i]
+    if not chain:
+        raise ValueError("Path is empty.")
 
-        product_other = 1.0
-        for j, (_, o2) in enumerate(chain):
+    # 2. Walk forward through the chain to find the first outcome we can adjust.
+    #    Skip single-outcome nodes (their probability is fixed at 1.0).
+    #    For each candidate, compute what its probability would need to be so that
+    #    the product of all outcomes in the chain equals final_probability.
+    adjust_idx: int | None = None
+    new_p: float | None = None
+
+    for i, (node_i, _) in enumerate(chain):
+        if len(node_i.outcomes) <= 1:
+            continue  # cannot adjust; must stay 1.0
+
+        product_others = 1.0
+        valid = True
+        for j, (_, oc_j) in enumerate(chain):
             if j == i:
                 continue
-            if o2.probability is None or o2.probability == 0.0:
-                raise ValueError("Multiple unknown probabilities along path.")
-            product_other *= o2.probability
+            if oc_j.probability <= 0.0:
+                valid = False
+                break
+            product_others *= oc_j.probability
 
-        if outcome.probability is None or outcome.probability == 0.0:
-            if product_other == 0:
-                raise ValueError("Cannot solve: product of other probabilities is zero.")
-            outcome.probability = final_probability / product_other
+        if not valid or product_others <= 0.0:
+            continue
 
-        total = sum(o.probability for o in node.outcomes)
-        if total > 0:
-            for o in node.outcomes:
-                o.probability /= total
+        candidate = final_probability / product_others
+        if 0.0 < candidate <= 1.0:
+            adjust_idx = i
+            new_p = candidate
+            break
 
-    # 3. Resolve any remaining single unknowns in each node along the path
-    for node, _ in chain:
-        solve_node_probabilities(node)
+    if adjust_idx is None or new_p is None:
+        raise ValueError(
+            f"No valid single-outcome adjustment exists along path {path} "
+            f"to achieve joint probability {final_probability}. "
+            f"Check that the path probabilities are non-zero and the target is reachable."
+        )
+
+    # 3. Apply the adjustment.
+    adj_node, adj_oc = chain[adjust_idx]
+    adj_oc.probability = new_p
+
+    # 4. Renormalize siblings proportionally so the node still sums to 1.0.
+    sibling_sum = sum(o.probability for o in adj_node.outcomes if o is not adj_oc)
+    remaining = 1.0 - new_p
+    if sibling_sum > 0.0:
+        scale = remaining / sibling_sum
+        for o in adj_node.outcomes:
+            if o is not adj_oc:
+                o.probability *= scale
+    elif len(adj_node.outcomes) > 1:
+        even = remaining / (len(adj_node.outcomes) - 1)
+        for o in adj_node.outcomes:
+            if o is not adj_oc:
+                o.probability = even
 
