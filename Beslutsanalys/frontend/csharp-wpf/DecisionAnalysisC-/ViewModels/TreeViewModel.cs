@@ -132,6 +132,8 @@ namespace DecisionAnalysis.ViewModels
             return LeafValues.TryGetValue(path, out var v) ? v : 0.0;
         }
 
+        public double? RootEv { get; set; }
+
         public Dictionary<string, double> NodeEvValues = new Dictionary<string, double>();
 
         public void SetNodeEv(string path, double ev)

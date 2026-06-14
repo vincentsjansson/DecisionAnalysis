@@ -110,9 +110,9 @@ namespace DecisionAnalysis
 
             // Auto-fit fires only on structural changes (add/remove/move), not on data edits
             (_leftCtx.Vm.Sequence  as INotifyCollectionChanged).CollectionChanged += (s, e) =>
-                { _leftCtx.AutoFitPending  = true; _leftCtx.Vm.ClearNodeEvValues();  };
+                { _leftCtx.AutoFitPending  = true; _leftCtx.Vm.ClearNodeEvValues(); _leftCtx.Vm.RootEv  = null; UpdateVocLabel(); };
             (_rightCtx.Vm.Sequence as INotifyCollectionChanged).CollectionChanged += (s, e) =>
-                { _rightCtx.AutoFitPending = true; _rightCtx.Vm.ClearNodeEvValues(); };
+                { _rightCtx.AutoFitPending = true; _rightCtx.Vm.ClearNodeEvValues(); _rightCtx.Vm.RootEv = null; UpdateVocLabel(); };
 
         }
 
@@ -440,6 +440,7 @@ namespace DecisionAnalysis
 
             _leftCtx.VisualMap.Clear();
             RefreshAll();
+            UpdateVocLabel();
         }
 
         // ── Dynamic node width ──────────────────────────────────────────────────────
@@ -848,6 +849,22 @@ namespace DecisionAnalysis
             }
         }
 
+        private void UpdateVocLabel()
+        {
+            if (!_loaded) return;
+            if (!_isSplit) { VocLabel.Visibility = Visibility.Collapsed; return; }
+            if (_leftCtx.Vm.RootEv.HasValue && _rightCtx.Vm.RootEv.HasValue)
+            {
+                double voc = _rightCtx.Vm.RootEv.Value - _leftCtx.Vm.RootEv.Value;
+                VocLabel.Text = $"VOC = {voc:G4}";
+            }
+            else
+            {
+                VocLabel.Text = "VOC = ? (click Run EV on both trees)";
+            }
+            VocLabel.Visibility = Visibility.Visible;
+        }
+
         private async Task RunEvAndRedrawAsync(TreeCtx ctx)
         {
             var root = ctx.Vm.GetRootNode();
@@ -859,8 +876,10 @@ namespace DecisionAnalysis
             {
                 var resp = await _api.RunEvAsync(new EVRequestDto { Tree = dto });
                 ctx.Vm.ClearNodeEvValues();
+                ctx.Vm.RootEv = resp.RootEv;
                 MergeEv(resp.Tree, ctx, new List<string>());
                 ctx.Vm.ForceNotify();
+                UpdateVocLabel();
             }
             catch (Exception ex)
             {

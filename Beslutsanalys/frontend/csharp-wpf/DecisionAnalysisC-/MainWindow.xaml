@@ -72,6 +72,11 @@
                             Background="White" Foreground="#1A1A1A"
                             BorderBrush="#1A1A1A" BorderThickness="1"
                             VerticalAlignment="Center" Cursor="Hand"/>
+                    <TextBlock x:Name="VocLabel" DockPanel.Dock="Right"
+                               VerticalAlignment="Center" FontFamily="Segoe UI"
+                               FontSize="13" Foreground="#1A1A1A"
+                               Margin="16,0" Visibility="Collapsed"
+                               Text="VOC = –"/>
 <Button x:Name="BtnSave" DockPanel.Dock="Left"
                             Content="💾 Save" Click="BtnSave_Click"
                             Margin="8,0,0,0" Padding="12,5" FontSize="13"
