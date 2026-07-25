@@ -4,7 +4,16 @@ A decision analysis tool for building, visualizing, and evaluating
 decision trees. Built as a learning project and teaching aid for an
 introductory course in risk, safety, and crisis management.
 
-## What it does
+## Status
+
+Early scaffolding. The tree model and JSON conversion layer work and
+are tested. Everything else described below under "Vision" — EV
+calculation, the API server, and the desktop UI — is not implemented
+yet. See [Roadmap](#roadmap) for what's actually done.
+
+## Vision
+
+Once built out, the app should let you:
 
 - Build decision trees interactively by adding nodes and outcomes
 - Visualize trees with smooth bezier curves on an infinite zoomable canvas
@@ -16,50 +25,46 @@ introductory course in risk, safety, and crisis management.
 - Flip trees horizontally for side-by-side comparison (e.g. Value of Information)
 - Conditional probability tables per node
 - Save and load trees as JSON files
-- Nodes can be chance nodes or decision nodes (EV uses max instead of weighted average)
+- Have nodes be chance nodes or decision nodes (EV uses max instead of weighted average)
+
+## What's implemented today
+
+- `TreeNode` / `Outcome` model with conditional-probability-table support
+  (subset-matching, auto-normalization)
+- Plain tree traversal (`traverse_tree`)
+- JSON ↔ model conversion (`frontend_to_backend` / `backend_to_frontend`),
+  round-trip tested
+- A WPF desktop shell that builds and runs, but shows an empty window —
+  `Window_Loaded` currently just fires one hardcoded request at the
+  (not yet existing) `/backward` endpoint as a wiring smoke test
 
 ## Project structure
+
+```
 DecisionAnalysis/
-
 ├── backend/
-
-│   ├── treemodel.py      # TreeNode and Outcome classes
-
-│   ├── treelogic.py      # EV calculation, traversal, backward fill
-
-│   ├── converters.py     # JSON ↔ Python model conversion
-
-│   ├── main.py           # FastAPI server (POST /ev, POST /backward)
-
-│   └── init.py
-
-│
-
+│   ├── app/
+│   │   ├── treemodel.py     # TreeNode and Outcome classes
+│   │   ├── treelogic.py     # tree traversal
+│   │   ├── converters.py    # JSON ↔ Python model conversion
+│   │   └── ascii_tree.py    # debug helper: print a tree to the console
+│   └── tests/
+│       └── testconverters.py
 ├── frontend/
-
-│   ├── csharp-wpf/       # WPF desktop app
-
-│   └── web/              # Planned TypeScript/GitHub Pages version
-
-│
-
-├── tests/
-
-│   ├── conftest.py
-
-│   ├── testconverters.py
-
-│   └── testbackward.py
-
-│
-
+│   └── csharp-wpf/          # WPF desktop app (empty shell so far)
+├── pyproject.toml
 └── requirements.txt
+```
+
+There is no `backend/main.py` / FastAPI server yet, and no `frontend/web/`
+directory yet — see Roadmap.
+
 ## Tech stack
 
 | Layer | Technology |
 |---|---|
 | Backend logic | Python 3.10+ |
-| API layer | FastAPI + Uvicorn |
+| API layer (planned) | FastAPI + Uvicorn |
 | Desktop frontend | C# WPF (.NET 4.7.2) |
 | Serialization | Newtonsoft.Json |
 | Planned web frontend | TypeScript + React + SVG |
@@ -70,31 +75,23 @@ DecisionAnalysis/
 
 ```bash
 pip install -r requirements.txt
-uvicorn backend.main:app --reload
+pytest
 ```
 
-Backend runs on `http://127.0.0.1:8000`.
+This installs and runs the current test suite (tree model + converters).
+There is no API server to start yet.
 
 ### 2. Desktop app
 
-Open `frontend/csharp-wpf/DecisionAnalysisC-/DecisionAnalysis.slnx`
-in Visual Studio and press F5.
+Open `frontend/csharp-wpf/DecisionAnalysis.slnx` in Visual Studio and press F5.
 
 Requires Visual Studio with the **.NET desktop development** workload.
 
-The app connects to the backend automatically. Start the backend
-before clicking **▶ Run EV** or **⟵ Backward**.
+The app currently shows an empty window and fires one hardcoded
+`/backward` request on load as a wiring smoke test — that call will fail
+until the backend API server exists (see Roadmap).
 
-## How to use
-
-1. Add nodes with the **+** button in the sequence bar
-2. Click a node to rename it or edit its outcomes and probabilities
-3. Click a leaf triangle to set its payoff value or a known joint probability
-4. Click **▶ Run EV** to calculate expected values (requires backend)
-5. Click **⇄ Flip** for a mirrored side-by-side view
-6. Use **💾 Save** / **📂 Load** to persist trees as JSON
-
-## API endpoints
+## API endpoints (planned, not yet implemented)
 
 | Method | Endpoint | Description |
 |---|---|---|
@@ -104,15 +101,16 @@ before clicking **▶ Run EV** or **⟵ Backward**.
 ## Roadmap
 
 - [x] Python tree model with conditional probability tables
-- [x] EV calculation and backward probability fill
-- [x] FastAPI endpoints (/ev and /backward)
-- [x] WPF UI with bezier tree canvas and zoom/pan
-- [x] Sequence bar with pill-style nodes
-- [x] Outcome editor with auto-normalized probabilities
-- [x] Clickable leaf nodes with value and joint probability input
-- [x] Per-path EV display on all nodes
-- [x] Chance and decision node types
-- [x] Flip/mirror view for Value of Information analysis
-- [x] Save and load trees as JSON
-- [x] Backward fill via leaf click
+- [x] JSON ↔ model conversion, round-trip tested
+- [ ] EV calculation
+- [ ] Backward probability fill (logic, not just the DTO shape)
+- [ ] FastAPI endpoints (`/ev` and `/backward`)
+- [ ] WPF UI with bezier tree canvas and zoom/pan
+- [ ] Sequence bar with pill-style nodes
+- [ ] Outcome editor with auto-normalized probabilities
+- [ ] Clickable leaf nodes with value and joint probability input
+- [ ] Per-path EV display on all nodes
+- [ ] Chance and decision node types
+- [ ] Flip/mirror view for Value of Information analysis
+- [ ] Save and load trees as JSON
 - [ ] TypeScript + React port for GitHub Pages deployment

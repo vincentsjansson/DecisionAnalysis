@@ -1,4 +1,4 @@
-from backend.treemodel import TreeNode, Outcome
+from backend.app.treemodel import TreeNode, Outcome
 
 
 

@@ -4,13 +4,6 @@ class Outcome:
         self.probability = probability
         self.child = child
 
-    def to_dict(self) -> dict:
-        return {
-            "name": self.name,
-            "probability": self.probability,
-            "child": self.child.to_dict() if self.child else None
-        }
-
 
 class TreeNode:
     def __init__(self, name: str, parent_outcome: Outcome = None):
@@ -54,12 +47,3 @@ class TreeNode:
             if total > 0:
                 for oc in self.outcomes:
                     oc.probability /= total
-
-    def to_dict(self) -> dict:
-        return {
-            "name": self.name,
-            "outcomes": [oc.to_dict() for oc in self.outcomes],
-            "conditional_tables": {
-                tuple(cond): probs for cond, probs in self.conditional_tables.items()
-            }
-        }
