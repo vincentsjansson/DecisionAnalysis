@@ -12,21 +12,20 @@ Tidigare C#/Python-kod hade en fältnamnsregression: C# serialiserade `condition
 
 ## Nodtyper
 
-- ❌ Tre nodtyper: `outcome`, `decision`, `leaf`. Ska finnas som explicit `nodeType`-fält i modellen från start.
+- ✅ Tre nodtyper: `outcome`, `decision`, `leaf`. Explicit `nodeType`-fält i modellen (`src/model/tree.ts`).
 
 ## Datamodell
 
-- ❌ `TreeNode` / `Outcome` i TS, med `nodeType`, payoff-fält på lövnoder, joint probability.
-- ⚠️ Villkorad sannolikhet per path (subset-matchning mot history-set): konceptet finns beskrivet från gamla Python-koden (`apply_conditional_probabilities`) men ingen TS-kod ännu. Bra referenslogik att porta över.
-  - Öppen fråga att låsa innan bygge: **tie-break-regel** när flera conditions av samma storlek matchar (gamla koden var beroende av dict-insättningsordning — odefinierat). Bestäm en explicit regel (t.ex. senast tillagd vinner, eller kräv unika storlekar och kasta fel vid krock).
-- ❌ Cykel-skydd vid nod-koppling (kontrollera att ny child inte redan är en förfader).
+- ✅ `TreeNode` / `Outcome` i TS (`src/model/tree.ts`), med `nodeType`, payoff-fält på lövnoder (konstruktor kastar om payoff saknas på leaf eller sätts på icke-leaf).
+- ✅ Villkorad sannolikhet per path (subset-matchning mot history-set): portad till `src/model/conditionalProbability.ts`. **Tie-break-frågan är låst:** flera lika specifika matchande conditions kastar `AmbiguousConditionalProbabilityError` istället för att tyst välja en (se "Bekräftad regel att inte återupprepa"-andan — samma princip applicerad här).
+- ✅ Cykel-skydd vid nod-koppling: `setChild` (`src/model/tree.ts`) går upp genom `parent`-kedjan och kastar `CyclicTreeError` om `child` redan är en förfader (inkl. self-loop).
 
 ## Beräkningar
 
-- ❌ EV per nod: slumpnoder = viktat medelvärde av barnens EV; beslutsnoder = max av barnens EV.
+- ✅ EV per nod: slumpnoder = viktat medelvärde av barnens EV; beslutsnoder = max av barnens EV. Rekursiv, fungerar på varje nod i trädet, inte bara löven (`src/model/expectedValue.ts`).
 - ❌ VOC (Value of Clairvoyance).
 - ❌ Beräkningssteg-visning (pedagogisk, t.ex. "0.3 × 8 + 0.7 × 2 = 4.2").
-- ❌ Sannolikhetsvalidering: varna (inte tyst normalisera) om villkorade sannolikheter för en nod inte summerar till 1.
+- ✅ Sannolikhetsvalidering: `src/model/validateProbabilities.ts` kastar `ProbabilitySumError` (med nod-id och faktisk summa) om villkorade sannolikheter för en nod inte summerar till 1 inom tolerans 1e-6 — normaliserar inte tyst.
 
 ## Flip / split
 
@@ -44,7 +43,7 @@ Tidigare C#/Python-kod hade en fältnamnsregression: C# serialiserade `condition
 
 ## Spara / ladda
 
-- ❌ Save/load som JSON, round-trip-säkert (spara → ladda om → identiska EV/VOC/sannolikhetsvärden).
+- ⚠️ Serialisering/deserialisering (`src/model/serialization.ts`) är klar och round-trip-testad (EV och conditional_tables identiska efter spara→ladda), snake_case-fältnamn (`conditional_tables`) enligt regeln ovan. **Fortfarande ❌:** ingen fil-I/O eller UI (spara-till-fil / ladda-från-fil-knappar).
 - Path-keyed datastrukturer för delade Outcome-objekt över flera paths: **inte en risk idag** (trädet är strikt ett träd, ingen delning), men bli explicit designkrav om delning införs senare.
 
 ## Undo/redo
