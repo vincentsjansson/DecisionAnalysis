@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { Outcome, setChild, TreeNode } from '../model/tree'
+import { addOutcome, setChild, TreeNode } from '../model/tree'
 import { renderTree } from './renderTree'
 
 function host(): HTMLElement {
@@ -8,12 +8,10 @@ function host(): HTMLElement {
 }
 
 function buildTree() {
-  const root = new TreeNode('root', 'outcome', 'Root')
-  const leafA = new TreeNode('la', 'leaf', 'LA', 10)
-  const leafB = new TreeNode('lb', 'leaf', 'LB', 0)
-  setChild(root, new Outcome('A', 0.3), leafA)
-  setChild(root, new Outcome('B', 0.7), leafB)
-  return { root, leafA, leafB }
+  const root = new TreeNode('root', 'chance', 'Root')
+  const edgeA = addOutcome(root, 'A', 0.3, 10)
+  const edgeB = addOutcome(root, 'B', 0.7, 0)
+  return { root, edgeA, edgeB }
 }
 
 describe('renderTree', () => {
@@ -27,18 +25,20 @@ describe('renderTree', () => {
     expect(h.querySelectorAll('svg')).toHaveLength(1)
   })
 
-  it('renders distinct shapes for the three node types', () => {
+  it('renders rect for decision, ellipse for chance, triangles for terminals', () => {
     const root = new TreeNode('root', 'decision', 'Decide')
-    const mid = new TreeNode('mid', 'outcome', 'Chance')
-    setChild(root, new Outcome('go', NaN), mid)
-    setChild(mid, new Outcome('win', 0.5), new TreeNode('l1', 'leaf', 'L1', 1))
-    setChild(mid, new Outcome('lose', 0.5), new TreeNode('l2', 'leaf', 'L2', 0))
+    const go = addOutcome(root, 'go')
+    addOutcome(root, 'stay', NaN, 0)
+    const mid = new TreeNode('mid', 'chance', 'Chance')
+    setChild(root, go, mid)
+    addOutcome(mid, 'win', 0.5, 1)
+    addOutcome(mid, 'lose', 0.5, 0)
 
     const h = host()
     renderTree(h, root)
     expect(h.querySelector('.node-decision rect')).not.toBeNull()
-    expect(h.querySelector('.node-outcome ellipse')).not.toBeNull()
-    expect(h.querySelector('.node-leaf path')).not.toBeNull()
+    expect(h.querySelector('.node-chance ellipse')).not.toBeNull()
+    expect(h.querySelectorAll('g.leaf path')).toHaveLength(3)
   })
 
   it('shows live EV when data is complete', () => {
@@ -46,14 +46,13 @@ describe('renderTree', () => {
     const h = host()
     renderTree(h, root)
     // EV = 0.3·10 + 0.7·0 = 3
-    const ev = h.querySelector('[data-node-id="root"] .node-ev')!
-    expect(ev.textContent).toBe('EV 3')
+    expect(h.querySelector('[data-node-id="root"] .node-ev')!.textContent).toBe('EV 3')
   })
 
-  it('shows "–" (never a fabricated value) when probabilities are unset', () => {
-    const root = new TreeNode('root', 'outcome', 'Root')
-    setChild(root, new Outcome('A', NaN), new TreeNode('la', 'leaf', 'LA', 10))
-    setChild(root, new Outcome('B', NaN), new TreeNode('lb', 'leaf', 'LB', 0))
+  it('shows "–" (never a fabricated value) for unset probabilities and values', () => {
+    const root = new TreeNode('root', 'chance', 'Root')
+    addOutcome(root, 'A', NaN, 10)
+    addOutcome(root, 'B', NaN) // no value either
 
     const h = host()
     renderTree(h, root)
@@ -61,16 +60,17 @@ describe('renderTree', () => {
     const labels = [...h.querySelectorAll('.edge-label')].map((n) => n.textContent)
     expect(labels).toContain('A · –')
     expect(labels).toContain('B · –')
-    // Incomplete marker, not a Σ-warning (NaN is unset, not wrong).
     expect(h.querySelector('.node-warning')!.textContent).toBe('p ofullständig')
+    const values = [...h.querySelectorAll('.leaf-value')].map((n) => n.textContent)
+    expect(values).toContain('–')
+    const joints = [...h.querySelectorAll('.leaf-joint')].map((n) => n.textContent)
+    expect(joints).toEqual(['p = –', 'p = –'])
   })
 
   it('live EV updates when the missing data is filled in and rerendered', () => {
-    const root = new TreeNode('root', 'outcome', 'Root')
-    const edgeA = new Outcome('A', NaN)
-    const edgeB = new Outcome('B', NaN)
-    setChild(root, edgeA, new TreeNode('la', 'leaf', 'LA', 10))
-    setChild(root, edgeB, new TreeNode('lb', 'leaf', 'LB', 0))
+    const root = new TreeNode('root', 'chance', 'Root')
+    const edgeA = addOutcome(root, 'A', NaN, 10)
+    const edgeB = addOutcome(root, 'B', NaN, 0)
 
     const h = host()
     renderTree(h, root)
@@ -84,27 +84,26 @@ describe('renderTree', () => {
   })
 
   it('shows a non-blocking Σ-warning when probabilities do not sum to 1', () => {
-    const root = new TreeNode('root', 'outcome', 'Root')
-    setChild(root, new Outcome('A', 0.3), new TreeNode('la', 'leaf', 'LA', 10))
-    setChild(root, new Outcome('B', 0.3), new TreeNode('lb', 'leaf', 'LB', 0))
+    const root = new TreeNode('root', 'chance', 'Root')
+    addOutcome(root, 'A', 0.3, 10)
+    addOutcome(root, 'B', 0.3, 0)
 
     const h = host()
     renderTree(h, root)
     expect(h.querySelector('.node-warning')!.textContent).toBe('Σ = 0.6 ⚠')
-    // Rendering still completed — the warning is non-blocking.
-    expect(h.querySelectorAll('g.node')).toHaveLength(3)
+    expect(h.querySelectorAll('g.leaf')).toHaveLength(2)
   })
 
-  it('omits probability labels on decision-node edges', () => {
+  it('omits probability labels on decision-node alternatives', () => {
     const root = new TreeNode('root', 'decision', 'Decide')
-    setChild(root, new Outcome('go', NaN), new TreeNode('l1', 'leaf', 'L1', 5))
-    setChild(root, new Outcome('stay', NaN), new TreeNode('l2', 'leaf', 'L2', 2))
+    addOutcome(root, 'go', NaN, 5)
+    addOutcome(root, 'stay', NaN, 2)
 
     const h = host()
     renderTree(h, root)
     const labels = [...h.querySelectorAll('.edge-label')].map((n) => n.textContent)
     expect(labels).toEqual(['go', 'stay'])
-    // Decision EV = max(5, 2) = 5 even with unset edge "probabilities".
+    // Decision EV = max(5, 2) even with unset probabilities.
     expect(h.querySelector('[data-node-id="root"] .node-ev')!.textContent).toBe('EV 5')
   })
 

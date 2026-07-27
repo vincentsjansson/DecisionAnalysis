@@ -1,71 +1,83 @@
 import { describe, expect, it } from 'vitest'
-import { CyclicTreeError, Outcome, setChild, TreeNode } from './tree'
+import {
+  addOutcome,
+  branchLabel,
+  CyclicTreeError,
+  setChild,
+  TreeNode,
+} from './tree'
 
-describe('TreeNode construction', () => {
-  it('requires a payoff on leaf nodes', () => {
-    expect(() => new TreeNode('l1', 'leaf', 'Leaf')).toThrow(/must have a payoff/)
+describe('addOutcome', () => {
+  it('adds outcomes with unset probability by default', () => {
+    const node = new TreeNode('n1', 'chance', 'Väder')
+    const edge = addOutcome(node, 'Regn')
+    expect(node.outcomes).toEqual([edge])
+    expect(Number.isNaN(edge.probability)).toBe(true)
+    expect(edge.child).toBeNull()
+    expect(edge.value).toBeUndefined()
   })
 
-  it('rejects a payoff on non-leaf nodes', () => {
-    expect(() => new TreeNode('d1', 'decision', 'Decide', 5)).toThrow(
-      /Only leaf nodes may have a payoff/,
-    )
+  it('accepts probability and terminal value', () => {
+    const node = new TreeNode('n1', 'chance', 'Väder')
+    const edge = addOutcome(node, 'Regn', 0.3, 8)
+    expect(edge.probability).toBe(0.3)
+    expect(edge.value).toBe(8)
   })
 
-  it('accepts a leaf node with a payoff', () => {
-    const leaf = new TreeNode('l1', 'leaf', 'Leaf', 42)
-    expect(leaf.payoff).toBe(42)
-    expect(leaf.children).toEqual([])
+  it('rejects duplicate sibling labels (branch tokens must be unique)', () => {
+    const node = new TreeNode('n1', 'chance', 'Väder')
+    addOutcome(node, 'Regn')
+    expect(() => addOutcome(node, 'Regn')).toThrow(/already has an outcome/)
   })
 })
 
 describe('setChild', () => {
-  it('attaches a child and sets its parent back-reference', () => {
-    const root = new TreeNode('root', 'outcome', 'Root')
-    const leaf = new TreeNode('l1', 'leaf', 'Leaf', 1)
-    const edge = new Outcome('Yes', 1)
+  it('attaches a child, sets the parent pointer, and clears the terminal value', () => {
+    const parent = new TreeNode('p', 'chance', 'P')
+    const edge = addOutcome(parent, 'A', 0.5, 99)
+    const child = new TreeNode('c', 'chance', 'C')
 
-    setChild(root, edge, leaf)
+    setChild(parent, edge, child)
 
-    expect(root.children).toEqual([edge])
-    expect(edge.child).toBe(leaf)
-    expect(leaf.parent).toBe(root)
+    expect(edge.child).toBe(child)
+    expect(child.parent).toBe(parent)
+    expect(edge.value).toBeUndefined()
   })
 
-  it('refuses to attach children to a leaf node', () => {
-    const leaf = new TreeNode('l1', 'leaf', 'Leaf', 1)
-    const other = new TreeNode('l2', 'leaf', 'Other', 2)
-    expect(() => setChild(leaf, new Outcome('x', 1), other)).toThrow(
-      /Cannot attach children to leaf/,
+  it('rejects an edge that does not belong to the parent', () => {
+    const parent = new TreeNode('p', 'chance', 'P')
+    const stray = addOutcome(new TreeNode('x', 'chance', 'X'), 'A')
+    expect(() => setChild(parent, stray, new TreeNode('c', 'chance', 'C'))).toThrow(
+      /does not belong/,
     )
   })
 
-  it('rejects a self-loop', () => {
-    const node = new TreeNode('a', 'outcome', 'A')
-    expect(() => setChild(node, new Outcome('x', 1), node)).toThrow(CyclicTreeError)
-  })
-
-  it('rejects attaching an ancestor as a child (cycle)', () => {
-    const grandparent = new TreeNode('gp', 'outcome', 'GP')
-    const parent = new TreeNode('p', 'outcome', 'P')
-    const child = new TreeNode('c', 'outcome', 'C')
-
-    setChild(grandparent, new Outcome('to-parent', 1), parent)
-    setChild(parent, new Outcome('to-child', 1), child)
-
-    // Attaching grandparent back under child would close a cycle.
-    expect(() => setChild(child, new Outcome('back-to-gp', 1), grandparent)).toThrow(
-      CyclicTreeError,
+  it('rejects attaching to an edge that already has a child', () => {
+    const parent = new TreeNode('p', 'chance', 'P')
+    const edge = addOutcome(parent, 'A')
+    setChild(parent, edge, new TreeNode('c1', 'chance', 'C1'))
+    expect(() => setChild(parent, edge, new TreeNode('c2', 'chance', 'C2'))).toThrow(
+      /already has a child/,
     )
   })
 
-  it('allows attaching an unrelated node as a child', () => {
-    const root = new TreeNode('root', 'outcome', 'Root')
-    const branchA = new TreeNode('a', 'outcome', 'A')
-    const branchB = new TreeNode('b', 'leaf', 'B', 3)
+  it('rejects a self-loop and ancestor cycles', () => {
+    const grandparent = new TreeNode('gp', 'chance', 'GP')
+    const parent = new TreeNode('p', 'chance', 'P')
+    const gpEdge = addOutcome(grandparent, 'down')
+    setChild(grandparent, gpEdge, parent)
 
-    setChild(root, new Outcome('a', 0.5), branchA)
-    expect(() => setChild(branchA, new Outcome('b', 1), branchB)).not.toThrow()
-    expect(branchA.children[0].child).toBe(branchB)
+    const selfEdge = addOutcome(parent, 'self')
+    expect(() => setChild(parent, selfEdge, parent)).toThrow(CyclicTreeError)
+
+    const backEdge = addOutcome(parent, 'back')
+    expect(() => setChild(parent, backEdge, grandparent)).toThrow(CyclicTreeError)
+  })
+})
+
+describe('branchLabel', () => {
+  it('namespaces by node id', () => {
+    const node = new TreeNode('n7', 'chance', 'Väder')
+    expect(branchLabel(node, 'Regn')).toBe('n7:Regn')
   })
 })

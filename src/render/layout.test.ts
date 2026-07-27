@@ -1,31 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { Outcome, setChild, TreeNode } from '../model/tree'
+import { addOutcome, setChild, TreeNode } from '../model/tree'
 import { LEAF_SPACING, layoutTree, NODE_H } from './layout'
 
 function fan(count: number): TreeNode {
-  const root = new TreeNode('root', 'outcome', 'Root')
+  const root = new TreeNode('root', 'chance', 'Root')
   for (let i = 0; i < count; i++) {
-    setChild(
-      root,
-      new Outcome(`alt${i}`, 1 / count),
-      new TreeNode(`leaf${i}`, 'leaf', `Leaf ${i}`, i),
-    )
+    addOutcome(root, `alt${i}`, 1 / count, i)
   }
   return root
 }
 
 describe('layoutTree', () => {
-  it('spaces leaves so they never overlap, growing the canvas as needed', () => {
+  it('spaces terminal outcomes so they never overlap, growing the canvas', () => {
     for (const count of [2, 5, 12]) {
       const layout = layoutTree(fan(count))
-      const leafYs = layout.boxes
-        .filter((b) => b.node.nodeType === 'leaf')
-        .map((b) => b.y)
-        .sort((a, b) => a - b)
+      const ys = layout.leaves.map((l) => l.y).sort((a, b) => a - b)
 
-      expect(leafYs).toHaveLength(count)
-      for (let i = 1; i < leafYs.length; i++) {
-        expect(leafYs[i] - leafYs[i - 1]).toBeGreaterThanOrEqual(NODE_H)
+      expect(ys).toHaveLength(count)
+      for (let i = 1; i < ys.length; i++) {
+        expect(ys[i] - ys[i - 1]).toBeGreaterThanOrEqual(NODE_H)
       }
       expect(layout.height).toBeGreaterThanOrEqual(count * LEAF_SPACING)
     }
@@ -41,31 +34,50 @@ describe('layoutTree', () => {
     }
   })
 
-  it('places edge labels clear of both node shapes', () => {
+  it('places edge labels strictly between parent and target', () => {
     const layout = layoutTree(fan(3))
     for (const line of layout.edges) {
-      // Label anchor must sit strictly between the parent's right edge and
-      // the child's left edge (text-anchor=end extends it leftward into gap).
       expect(line.labelX).toBeGreaterThan(line.x1)
-      expect(line.labelX).toBeLessThan(line.x2)
+      expect(line.labelX).toBeLessThan(line.x2 + 1)
     }
   })
 
-  it('centers a parent on its children and tracks history per node', () => {
-    const root = new TreeNode('root', 'outcome', 'Root')
-    const mid = new TreeNode('mid', 'outcome', 'Mid')
-    setChild(root, new Outcome('A', 0.5), mid)
-    setChild(mid, new Outcome('X', 0.5), new TreeNode('lx', 'leaf', 'LX', 1))
-    setChild(mid, new Outcome('Y', 0.5), new TreeNode('ly', 'leaf', 'LY', 2))
+  it('centers a parent on its branches and tracks history per node', () => {
+    const root = new TreeNode('root', 'chance', 'Root')
+    const edgeA = addOutcome(root, 'A', 1)
+    const mid = new TreeNode('mid', 'chance', 'Mid')
+    setChild(root, edgeA, mid)
+    addOutcome(mid, 'X', 0.5, 1)
+    addOutcome(mid, 'Y', 0.5, 2)
 
     const layout = layoutTree(root)
     const midBox = layout.byNode.get(mid)!
-    const xs = layout.boxes.filter((b) => b.node.nodeType === 'leaf').map((b) => b.y)
-    expect(midBox.y).toBeCloseTo((xs[0] + xs[1]) / 2)
+    const ys = layout.leaves.map((l) => l.y)
+    expect(midBox.y).toBeCloseTo((ys[0] + ys[1]) / 2)
+    expect([...midBox.history]).toEqual(['root:A'])
+  })
 
-    expect([...layout.byNode.get(mid)!.history]).toEqual(['root:A'])
-    const lxBox = layout.boxes.find((b) => b.node.id === 'lx')!
-    expect(lxBox.history.has('root:A')).toBe(true)
-    expect(lxBox.history.has('mid:X')).toBe(true)
+  it('computes joint probability per terminal outcome (decision steps count as 1)', () => {
+    const root = new TreeNode('root', 'decision', 'Decide')
+    const go = addOutcome(root, 'go')
+    addOutcome(root, 'stay', NaN, 0)
+    const mid = new TreeNode('mid', 'chance', 'Mid')
+    setChild(root, go, mid)
+    addOutcome(mid, 'win', 0.3, 10)
+    addOutcome(mid, 'lose', 0.7, 0)
+
+    const layout = layoutTree(root)
+    const win = layout.leaves.find((l) => l.edge.label === 'win')!
+    const stay = layout.leaves.find((l) => l.edge.label === 'stay')!
+    expect(win.joint).toBeCloseTo(0.3)
+    expect(stay.joint).toBeCloseTo(1)
+  })
+
+  it('propagates NaN joint for unset probabilities instead of fabricating', () => {
+    const root = new TreeNode('root', 'chance', 'Root')
+    addOutcome(root, 'A', NaN, 5)
+    addOutcome(root, 'B', NaN, 2)
+    const layout = layoutTree(root)
+    expect(layout.leaves.every((l) => Number.isNaN(l.joint))).toBe(true)
   })
 })

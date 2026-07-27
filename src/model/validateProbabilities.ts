@@ -9,7 +9,7 @@ export class ProbabilitySumError extends Error {
 
   constructor(nodeId: string, sum: number) {
     super(
-      `Node "${nodeId}": conditional probabilities sum to ${sum}, expected 1 (±${TOLERANCE}).`,
+      `Node "${nodeId}": outcome probabilities sum to ${sum}, expected 1 (±${TOLERANCE}).`,
     )
     this.name = 'ProbabilitySumError'
     this.nodeId = nodeId
@@ -17,22 +17,22 @@ export class ProbabilitySumError extends Error {
   }
 }
 
-/** Sums the resolved probabilities of `node`'s outgoing edges for the given
- * history. Only meaningful for `outcome` nodes — always 1 for other node
- * types since there's nothing to validate. */
+/** Sums the resolved probabilities of `node`'s outcomes for the given
+ * history. Only meaningful for chance nodes — always 1 for decision nodes
+ * since their alternatives carry no probabilities. */
 export function sumProbabilities(node: TreeNode, historySet: Set<string>): number {
-  if (node.nodeType !== 'outcome') return 1
-  return node.children.reduce(
+  if (node.nodeType !== 'chance') return 1
+  return node.outcomes.reduce(
     (total, edge) => total + resolveProbability(node, edge, historySet),
     0,
   )
 }
 
-/** Throws `ProbabilitySumError` if `node`'s outgoing probabilities (for the
+/** Throws `ProbabilitySumError` if `node`'s outcome probabilities (for the
  * given history) don't sum to 1 within tolerance. Deliberately does not
  * normalize — a wrong sum should surface, not be silently corrected. */
 export function validateProbabilities(node: TreeNode, historySet: Set<string>): void {
-  if (node.nodeType !== 'outcome') return
+  if (node.nodeType !== 'chance') return
 
   const sum = sumProbabilities(node, historySet)
   if (Math.abs(sum - 1) > TOLERANCE) {

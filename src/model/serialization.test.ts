@@ -1,81 +1,64 @@
 import { describe, expect, it } from 'vitest'
 import { calculateExpectedValue } from './expectedValue'
 import { deserializeTree, serializeTree } from './serialization'
-import { Outcome, setChild, TreeNode } from './tree'
+import { addOutcome, setChild, TreeNode } from './tree'
 
 function buildTree() {
-  const root = new TreeNode('root', 'outcome', 'Root')
-  const leafA = new TreeNode('leafA', 'leaf', 'A', 8)
-  const child = new TreeNode('child', 'outcome', 'Child')
-  const leafX = new TreeNode('leafX', 'leaf', 'X', 3)
-  const leafY = new TreeNode('leafY', 'leaf', 'Y', 5)
+  const root = new TreeNode('root', 'chance', 'Root')
+  const mid = new TreeNode('mid', 'chance', 'Mid')
 
-  const edgeToA = new Outcome('A', 0.5)
-  edgeToA.conditionalTable = [
-    { condition: new Set(['root:A']), probability: 0.9 },
-    { condition: new Set(['root:A', 'root:B']), probability: 0.4 },
+  addOutcome(root, 'A', 0.5, 8)
+  const edgeB = addOutcome(root, 'B', 0.5)
+  setChild(root, edgeB, mid)
+
+  addOutcome(mid, 'X', 0.3, 3)
+  addOutcome(mid, 'Y', 0.7, 5)
+  mid.conditionalTable = [
+    { condition: new Set(['root:B']), probabilities: { X: 0.6, Y: 0.4 } },
+    { condition: new Set(['root:A', 'root:B']), probabilities: { X: 0.2, Y: 0.8 } },
   ]
-  setChild(root, edgeToA, leafA)
-  setChild(root, new Outcome('B', 0.5), child)
-  setChild(child, new Outcome('X', 0.3), leafX)
-  setChild(child, new Outcome('Y', 0.7), leafY)
-
   return root
 }
 
 describe('serializeTree / deserializeTree', () => {
-  it('produces plain JSON-safe output with snake_case fields', () => {
-    const root = buildTree()
-    const serialized = serializeTree(root)
-
-    // No Sets or other non-JSON-safe values should remain.
+  it('produces JSON-safe snake_case output with sorted condition arrays', () => {
+    const serialized = serializeTree(buildTree())
     expect(() => JSON.stringify(serialized)).not.toThrow()
+    expect(serialized.node_type).toBe('chance')
 
-    expect(serialized.node_type).toBe('outcome')
-    const edgeToA = serialized.children.find((c) => c.label === 'A')!
-    expect(edgeToA.conditional_tables).toEqual([
-      { condition: ['root:A'], probability: 0.9 },
-      { condition: ['root:A', 'root:B'], probability: 0.4 },
+    const midSer = serialized.outcomes.find((o) => o.label === 'B')!.child!
+    expect(midSer.conditional_tables).toEqual([
+      { condition: ['root:B'], probabilities: { X: 0.6, Y: 0.4 } },
+      { condition: ['root:A', 'root:B'], probabilities: { X: 0.2, Y: 0.8 } },
     ])
   })
 
-  it('round-trips through JSON with an identical structure', () => {
+  it('round-trips through JSON with identical structure and behavior', () => {
     const root = buildTree()
-    const json = JSON.stringify(serializeTree(root))
-    const restored = deserializeTree(JSON.parse(json))
+    const restored = deserializeTree(JSON.parse(JSON.stringify(serializeTree(root))))
 
     expect(serializeTree(restored)).toEqual(serializeTree(root))
-  })
-
-  it('round-trips EV and conditional-table behavior, not just shape', () => {
-    const root = buildTree()
-    const restored = deserializeTree(JSON.parse(JSON.stringify(serializeTree(root))))
-
     expect(calculateExpectedValue(restored)).toBeCloseTo(calculateExpectedValue(root))
 
-    const originalEdge = root.children.find((c) => c.label === 'A')!
-    const restoredEdge = restored.children.find((c) => c.label === 'A')!
-    expect(restoredEdge.conditionalTable).toHaveLength(originalEdge.conditionalTable.length)
-    expect([...restoredEdge.conditionalTable[0].condition]).toEqual(
-      [...originalEdge.conditionalTable[0].condition],
-    )
+    const mid = restored.outcomes.find((o) => o.label === 'B')!.child!
+    expect(mid.parent).toBe(restored)
   })
 
-  it('preserves leaf payoffs and omits payoff on non-leaf nodes', () => {
-    const root = buildTree()
-    const serialized = serializeTree(root)
-    expect(serialized.payoff).toBeUndefined()
+  it('round-trips unset probability (NaN) and unset value via null — explicitly', () => {
+    const root = new TreeNode('root', 'chance', 'Root')
+    addOutcome(root, 'A') // probability NaN, value undefined
 
-    const leafSerialized = serialized.children
-      .find((c) => c.label === 'A')!
-      .child!
-    expect(leafSerialized.payoff).toBe(8)
+    const json = JSON.parse(JSON.stringify(serializeTree(root)))
+    expect(json.outcomes[0].probability).toBeNull()
+    expect(json.outcomes[0].value).toBeNull()
+
+    const restored = deserializeTree(json)
+    expect(Number.isNaN(restored.outcomes[0].probability)).toBe(true)
+    expect(restored.outcomes[0].value).toBeUndefined()
   })
 
-  it('restores parent back-references usable by setChild cycle checks', () => {
-    const root = buildTree()
-    const restored = deserializeTree(JSON.parse(JSON.stringify(serializeTree(root))))
-    const restoredChild = restored.children.find((c) => c.label === 'B')!.child!
-    expect(restoredChild.parent).toBe(restored)
+  it('preserves terminal payoffs', () => {
+    const serialized = serializeTree(buildTree())
+    expect(serialized.outcomes.find((o) => o.label === 'A')!.value).toBe(8)
   })
 })

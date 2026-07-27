@@ -1,4 +1,4 @@
-import type { TreeNode } from '../model/tree'
+import type { Outcome, TreeNode } from '../model/tree'
 import { resolveProbability } from '../model/conditionalProbability'
 import { calculateExpectedValue } from '../model/expectedValue'
 import { ProbabilitySumError, sumProbabilities } from '../model/validateProbabilities'
@@ -16,14 +16,15 @@ export interface ViewTransform {
 export interface RenderOptions {
   selected?: TreeNode | null
   view?: ViewTransform
-  onNodeClick?: (node: TreeNode) => void
+  onNodeClick?: (node: TreeNode, event: MouseEvent) => void
+  onLeafClick?: (node: TreeNode, edge: Outcome, event: MouseEvent) => void
   onBackgroundClick?: () => void
 }
 
 /** Formats a number for display, or "–" for anything unfit to show
- * (NaN/Infinity). The locked rule: never fabricate a value. */
-export function fmt(x: number): string {
-  return Number.isFinite(x) ? String(parseFloat(x.toPrecision(4))) : '–'
+ * (NaN/Infinity/undefined). The locked rule: never fabricate a value. */
+export function fmt(x: number | undefined): string {
+  return x !== undefined && Number.isFinite(x) ? String(parseFloat(x.toPrecision(4))) : '–'
 }
 
 function el<K extends keyof SVGElementTagNameMap>(tag: K): SVGElementTagNameMap[K] {
@@ -39,8 +40,8 @@ function text(x: number, y: number, content: string, cls: string): SVGTextElemen
   return t
 }
 
-/** EV for one node, displayed gracefully: exceptions (childless non-leaf,
- * ambiguous conditionals) and NaN (unset probabilities) all become "–". */
+/** EV for one node, displayed gracefully: exceptions (no outcomes, ambiguous
+ * conditionals) and NaN (unset probabilities/values) all become "–". */
 function nodeEvText(box: NodeBox): string {
   try {
     return `EV ${fmt(calculateExpectedValue(box.node, box.history))}`
@@ -49,10 +50,10 @@ function nodeEvText(box: NodeBox): string {
   }
 }
 
-/** Probability-sum status for an outcome node: null when fine, otherwise a
+/** Probability-sum status for a chance node: null when fine, otherwise a
  * short warning string. Never throws, never blocks rendering. */
 function nodeWarningText(box: NodeBox): string | null {
-  if (box.node.nodeType !== 'outcome' || box.node.children.length === 0) return null
+  if (box.node.nodeType !== 'chance' || box.node.outcomes.length === 0) return null
   try {
     const sum = sumProbabilities(box.node, box.history)
     if (Number.isNaN(sum)) return 'p ofullständig'
@@ -77,18 +78,11 @@ function nodeShape(box: NodeBox, selected: boolean): SVGElement {
     r.setAttribute('class', cls)
     return r
   }
-  if (box.node.nodeType === 'outcome') {
-    const e = el('ellipse')
-    e.setAttribute('rx', String(w / 2))
-    e.setAttribute('ry', String(h / 2 + 2))
-    e.setAttribute('class', cls)
-    return e
-  }
-  // leaf: right-pointing triangle at the left edge, labels beside it
-  const p = el('path')
-  p.setAttribute('d', `M ${-w / 2} -13 L ${-w / 2 + 22} 0 L ${-w / 2} 13 Z`)
-  p.setAttribute('class', cls)
-  return p
+  const e = el('ellipse')
+  e.setAttribute('rx', String(w / 2))
+  e.setAttribute('ry', String(h / 2 + 2))
+  e.setAttribute('class', cls)
+  return e
 }
 
 /** Fully idempotent: wipes the host and rebuilds the entire SVG from the
@@ -135,7 +129,7 @@ export function renderTree(
 
     const parentBox = layout.byNode.get(line.parent)!
     let label = line.edge.label
-    if (line.parent.nodeType === 'outcome') {
+    if (line.parent.nodeType === 'chance') {
       let p: string
       try {
         p = fmt(resolveProbability(line.parent, line.edge, parentBox.history))
@@ -149,6 +143,32 @@ export function renderTree(
     viewport.appendChild(t)
   }
 
+  // Terminal outcomes as leaf marks: triangle + value + joint probability.
+  for (const mark of layout.leaves) {
+    const g = el('g')
+    g.setAttribute('class', 'leaf')
+    g.setAttribute('data-leaf', `${mark.node.id}:${mark.edge.label}`)
+    g.setAttribute('transform', `translate(${mark.x} ${mark.y})`)
+    g.addEventListener('click', (e) => {
+      e.stopPropagation()
+      opts.onLeafClick?.(mark.node, mark.edge, e as MouseEvent)
+    })
+
+    const tri = el('path')
+    tri.setAttribute('d', 'M 0 -12 L 20 0 L 0 12 Z')
+    tri.setAttribute('class', 'shape')
+    g.appendChild(tri)
+
+    const vt = text(28, -2, fmt(mark.edge.value), 'leaf-value')
+    vt.setAttribute('text-anchor', 'start')
+    g.appendChild(vt)
+    const pt = text(28, 13, `p = ${fmt(mark.joint)}`, 'leaf-joint')
+    pt.setAttribute('text-anchor', 'start')
+    g.appendChild(pt)
+
+    viewport.appendChild(g)
+  }
+
   for (const box of layout.boxes) {
     const g = el('g')
     g.setAttribute('class', `node node-${box.node.nodeType}`)
@@ -156,26 +176,15 @@ export function renderTree(
     g.setAttribute('transform', `translate(${box.x} ${box.y})`)
     g.addEventListener('click', (e) => {
       e.stopPropagation()
-      opts.onNodeClick?.(box.node)
+      opts.onNodeClick?.(box.node, e as MouseEvent)
     })
 
     g.appendChild(nodeShape(box, box.node === opts.selected))
-
-    if (box.node.nodeType === 'leaf') {
-      const tx = -box.w / 2 + 30
-      const lt = text(tx, -3, box.node.label, 'node-label leaf-label')
-      lt.setAttribute('text-anchor', 'start')
-      g.appendChild(lt)
-      const vt = text(tx, 13, fmt(box.node.payoff ?? NaN), 'node-ev')
-      vt.setAttribute('text-anchor', 'start')
-      g.appendChild(vt)
-    } else {
-      g.appendChild(text(0, -3, box.node.label, 'node-label'))
-      g.appendChild(text(0, 13, nodeEvText(box), 'node-ev'))
-      const warning = nodeWarningText(box)
-      if (warning) {
-        g.appendChild(text(0, box.h / 2 + 16, warning, 'node-warning'))
-      }
+    g.appendChild(text(0, -3, box.node.label, 'node-label'))
+    g.appendChild(text(0, 13, nodeEvText(box), 'node-ev'))
+    const warning = nodeWarningText(box)
+    if (warning) {
+      g.appendChild(text(0, box.h / 2 + 16, warning, 'node-warning'))
     }
 
     viewport.appendChild(g)

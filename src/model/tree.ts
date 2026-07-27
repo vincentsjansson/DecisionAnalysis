@@ -1,26 +1,32 @@
-export type NodeType = 'decision' | 'outcome' | 'leaf'
+export type NodeType = 'decision' | 'chance'
 
-/** A single conditional-probability override: applies when all labels in
- * `condition` are present in the current history. */
-export interface ConditionalEntry {
+/** One conditional-probability row on a node: when every token in
+ * `condition` is present in the current history, the row supplies the
+ * probability for each of the node's outcomes (keyed by outcome label).
+ * A full row per condition — not per-edge overrides — so a row is always a
+ * complete distribution and row-sum-to-1 can be checked structurally. */
+export interface ConditionalRow {
   condition: Set<string>
-  probability: number
+  probabilities: Record<string, number>
 }
 
-/** An edge from an `outcome` (or `decision`) node to a child node.
- * `probability` and `conditionalTable` are only meaningful when the owning
- * node is of type `outcome` — decision nodes ignore them. */
+/** An outgoing path from a node — the node's outcome (chance nodes) or
+ * alternative (decision nodes). A terminal outcome (`child === null`) is the
+ * end of a path and carries the payoff in `value`. There is no separate leaf
+ * node type — this mirrors textbook decision trees. */
 export class Outcome {
   label: string
+  /** Base probability (chance nodes). NaN = deliberately unset, shown as "–". */
   probability: number
   child: TreeNode | null
-  conditionalTable: ConditionalEntry[]
+  /** Payoff when terminal. undefined = unset, shown as "–". */
+  value?: number
 
-  constructor(label: string, probability = 0, child: TreeNode | null = null) {
+  constructor(label: string, probability = NaN, child: TreeNode | null = null, value?: number) {
     this.label = label
     this.probability = probability
     this.child = child
-    this.conditionalTable = []
+    this.value = value
   }
 }
 
@@ -28,35 +34,28 @@ export class TreeNode {
   id: string
   nodeType: NodeType
   label: string
-  children: Outcome[]
-  payoff?: number
-  /** Set by `setChild` on the child when it is attached. Used for cycle detection. */
+  outcomes: Outcome[]
+  conditionalTable: ConditionalRow[]
+  /** Set when attached via `setChild`. Used for cycle detection and path walks. */
   parent: TreeNode | null
 
-  constructor(id: string, nodeType: NodeType, label: string, payoff?: number) {
-    if (nodeType === 'leaf' && payoff === undefined) {
-      throw new Error(`Leaf node "${id}" must have a payoff value`)
-    }
-    if (nodeType !== 'leaf' && payoff !== undefined) {
-      throw new Error(`Only leaf nodes may have a payoff value (node "${id}" is "${nodeType}")`)
-    }
-
+  constructor(id: string, nodeType: NodeType, label: string) {
     this.id = id
     this.nodeType = nodeType
     this.label = label
-    this.children = []
-    this.payoff = payoff
+    this.outcomes = []
+    this.conditionalTable = []
     this.parent = null
   }
 }
 
 /** The single history/condition token format used everywhere: model,
- * conditional tables, and UI. Namespaced by node id so identical edge
- * labels on different nodes don't collide. Never build this string by
- * hand elsewhere — legacy had three incompatible formats and the
- * conditional probabilities never reached the EV calculation. */
-export function branchLabel(node: TreeNode, edgeLabel: string): string {
-  return `${node.id}:${edgeLabel}`
+ * conditional tables, and UI. Namespaced by node id so identical outcome
+ * labels on different nodes don't collide. Never build this string by hand
+ * elsewhere — legacy had three incompatible formats and the conditional
+ * probabilities never reached the EV calculation. */
+export function branchLabel(node: TreeNode, outcomeLabel: string): string {
+  return `${node.id}:${outcomeLabel}`
 }
 
 export class CyclicTreeError extends Error {
@@ -69,11 +68,31 @@ export class CyclicTreeError extends Error {
   }
 }
 
-/** Attaches `child` to `parent` via `edge`. Throws `CyclicTreeError` if `child`
- * is already an ancestor of `parent` (including `child === parent`). */
+/** Adds a new outcome to `node`. Labels must be unique among siblings since
+ * the branch token (`nodeId:label`) is the history key. */
+export function addOutcome(
+  node: TreeNode,
+  label: string,
+  probability = NaN,
+  value?: number,
+): Outcome {
+  if (node.outcomes.some((o) => o.label === label)) {
+    throw new Error(`Node "${node.id}" already has an outcome labeled "${label}"`)
+  }
+  const outcome = new Outcome(label, probability, null, value)
+  node.outcomes.push(outcome)
+  return outcome
+}
+
+/** Attaches `child` at the end of `edge` (which must belong to `parent`).
+ * Throws `CyclicTreeError` if `child` is already an ancestor of `parent`.
+ * The edge stops being terminal, so any stored payoff is cleared. */
 export function setChild(parent: TreeNode, edge: Outcome, child: TreeNode): void {
-  if (parent.nodeType === 'leaf') {
-    throw new Error(`Cannot attach children to leaf node "${parent.id}"`)
+  if (parent.outcomes.indexOf(edge) === -1) {
+    throw new Error(`Outcome "${edge.label}" does not belong to node "${parent.id}"`)
+  }
+  if (edge.child !== null) {
+    throw new Error(`Outcome "${edge.label}" on node "${parent.id}" already has a child`)
   }
 
   let ancestor: TreeNode | null = parent
@@ -85,53 +104,74 @@ export function setChild(parent: TreeNode, edge: Outcome, child: TreeNode): void
   }
 
   edge.child = child
+  edge.value = undefined
   child.parent = parent
-  parent.children.push(edge)
 }
 
-/** Detaches `edge` (and thereby its whole subtree) from `parent`. */
-export function removeChild(parent: TreeNode, edge: Outcome): void {
-  const index = parent.children.indexOf(edge)
-  if (index === -1) {
-    throw new Error(`Edge "${edge.label}" is not a child edge of node "${parent.id}"`)
+/** Detaches `edge`'s child subtree, making the edge terminal again (payoff
+ * unset). Used by "delete node" — the outcome itself survives. */
+export function detachChild(edge: Outcome): void {
+  if (edge.child) {
+    edge.child.parent = null
+    edge.child = null
   }
-  parent.children.splice(index, 1)
-  if (edge.child) edge.child.parent = null
 }
 
-/** Renames `edge` and rewrites every conditional-table condition in the whole
- * tree (from `root`) that referenced the old branch token, so conditions keep
- * working after a rename. Legacy keyed conditions on names and silently broke
- * them on rename — this is the deliberate fix. Sibling edge labels must stay
- * unique, since the branch token (`nodeId:label`) is the history key. */
-export function renameEdgeLabel(
+/** Removes `edge` (and thereby its whole subtree) from `node`, and drops the
+ * outcome's column from the node's conditional rows. */
+export function removeOutcome(node: TreeNode, edge: Outcome): void {
+  const index = node.outcomes.indexOf(edge)
+  if (index === -1) {
+    throw new Error(`Outcome "${edge.label}" does not belong to node "${node.id}"`)
+  }
+  node.outcomes.splice(index, 1)
+  if (edge.child) edge.child.parent = null
+  for (const row of node.conditionalTable) {
+    delete row.probabilities[edge.label]
+  }
+}
+
+/** Renames an outcome and keeps every reference consistent:
+ * - the node's own conditional rows (probabilities are keyed by label)
+ * - every condition token `nodeId:oldLabel` anywhere in the tree
+ * Legacy keyed conditions on names and silently broke them on rename —
+ * this is the deliberate fix. Sibling labels must stay unique. */
+export function renameOutcome(
   root: TreeNode,
-  parent: TreeNode,
+  node: TreeNode,
   edge: Outcome,
   newLabel: string,
 ): void {
-  if (parent.children.indexOf(edge) === -1) {
-    throw new Error(`Edge "${edge.label}" is not a child edge of node "${parent.id}"`)
+  if (node.outcomes.indexOf(edge) === -1) {
+    throw new Error(`Outcome "${edge.label}" does not belong to node "${node.id}"`)
   }
-  if (parent.children.some((e) => e !== edge && e.label === newLabel)) {
+  if (node.outcomes.some((o) => o !== edge && o.label === newLabel)) {
     throw new Error(
-      `Node "${parent.id}" already has a sibling edge labeled "${newLabel}" — sibling labels must be unique`,
+      `Node "${node.id}" already has an outcome labeled "${newLabel}" — sibling labels must be unique`,
     )
   }
 
-  const oldToken = branchLabel(parent, edge.label)
-  const newToken = branchLabel(parent, newLabel)
+  const oldLabel = edge.label
+  const oldToken = branchLabel(node, oldLabel)
+  const newToken = branchLabel(node, newLabel)
   edge.label = newLabel
 
-  const rewrite = (node: TreeNode): void => {
-    for (const childEdge of node.children) {
-      for (const entry of childEdge.conditionalTable) {
-        if (entry.condition.has(oldToken)) {
-          entry.condition.delete(oldToken)
-          entry.condition.add(newToken)
-        }
+  for (const row of node.conditionalTable) {
+    if (oldLabel in row.probabilities) {
+      row.probabilities[newLabel] = row.probabilities[oldLabel]
+      delete row.probabilities[oldLabel]
+    }
+  }
+
+  const rewrite = (current: TreeNode): void => {
+    for (const row of current.conditionalTable) {
+      if (row.condition.has(oldToken)) {
+        row.condition.delete(oldToken)
+        row.condition.add(newToken)
       }
-      if (childEdge.child) rewrite(childEdge.child)
+    }
+    for (const outcome of current.outcomes) {
+      if (outcome.child) rewrite(outcome.child)
     }
   }
   rewrite(root)

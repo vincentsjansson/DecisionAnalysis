@@ -1,44 +1,39 @@
-import type { NodeType } from '../model/tree'
+import type { NodeType, Outcome } from '../model/tree'
 import {
-  Outcome,
-  removeChild,
-  renameEdgeLabel,
+  addOutcome,
+  branchLabel,
+  detachChild,
+  removeOutcome,
+  renameOutcome,
   setChild,
   TreeNode,
 } from '../model/tree'
-import type { ConditionalEntry } from '../model/tree'
+import type { ConditionalRow } from '../model/tree'
 import { backwardFill } from '../model/backwardFill'
-import { branchLabel } from '../model/tree'
-import { fmt, renderTree, applyViewTransform } from '../render/renderTree'
+import { applyViewTransform, fmt, renderTree } from '../render/renderTree'
 import type { ViewTransform } from '../render/renderTree'
 
 export interface AppState {
   root: TreeNode | null
   selected: TreeNode | null
-  /** Panel mode: normal node editing, or the create-root form. */
-  creatingRoot: boolean
-  /** Transparency report / error message shown in the panel. */
   message: string
   view: ViewTransform
   idCounter: number
 }
 
-export interface ChildSpec {
-  type: NodeType
-  edgeLabel: string
-  payoff?: number
-}
-
 export interface AppApi {
-  createRoot(type: NodeType, label: string, payoff?: number): TreeNode
-  addChild(parent: TreeNode, spec: ChildSpec): TreeNode
+  createRoot(type: NodeType, label: string): TreeNode
+  addOutcomeTo(node: TreeNode, label: string, probability?: number, value?: number): Outcome
+  attachChild(node: TreeNode, edge: Outcome, type: NodeType, label: string): TreeNode
+  toggleType(node: TreeNode): void
+  renameNode(node: TreeNode, label: string): void
+  renameOutcomeOn(node: TreeNode, edge: Outcome, newLabel: string): void
+  removeOutcomeFrom(node: TreeNode, edge: Outcome): void
+  setProbability(edge: Outcome, probability: number): void
+  setValue(edge: Outcome, value: number | undefined): void
+  setConditionalTable(node: TreeNode, rows: ConditionalRow[]): void
   deleteNode(node: TreeNode): void
-  setNodeLabel(node: TreeNode, label: string): void
-  setPayoff(node: TreeNode, payoff: number): void
-  setEdgeProbability(edge: Outcome, probability: number): void
-  renameEdge(parent: TreeNode, edge: Outcome, newLabel: string): void
-  setConditionalEntries(edge: Outcome, entries: ConditionalEntry[]): void
-  applyBackwardFill(target: TreeNode, targetProbability: number): void
+  applyBackwardFill(node: TreeNode, edge: Outcome, targetProbability: number): void
   selectNode(node: TreeNode | null): void
   render(): void
 }
@@ -48,7 +43,7 @@ export interface App {
   api: AppApi
 }
 
-/** `confirmFn` is injectable so tests can run the delete flow headlessly. */
+/** `confirmFn` is injectable so tests can run destructive flows headlessly. */
 export function createApp(
   container: HTMLElement,
   options: { confirmFn?: (message: string) => boolean } = {},
@@ -58,13 +53,12 @@ export function createApp(
   const state: AppState = {
     root: null,
     selected: null,
-    creatingRoot: false,
     message: '',
     view: { scale: 1, x: 0, y: 0 },
     idCounter: 0,
   }
 
-  // ── Static shell (built once — zoom/pan listeners never accumulate) ──
+  // ── Static shell (built once — listeners never accumulate) ──
   container.innerHTML = ''
   container.className = 'app'
 
@@ -78,14 +72,20 @@ export function createApp(
   addBtn.textContent = 'Lägg till nod'
   topbar.append(title, addBtn)
 
-  const workspace = document.createElement('div')
-  workspace.className = 'workspace'
+  const messageStrip = document.createElement('div')
+  messageStrip.className = 'message-strip'
+  messageStrip.style.display = 'none'
+
   const canvasHost = document.createElement('div')
   canvasHost.className = 'canvas-host'
-  const panel = document.createElement('aside')
-  panel.className = 'panel'
-  workspace.append(canvasHost, panel)
-  container.append(topbar, workspace)
+
+  const menuLayer = document.createElement('div')
+  menuLayer.className = 'menu-layer'
+
+  const dialogLayer = document.createElement('div')
+  dialogLayer.className = 'dialog-layer'
+
+  container.append(topbar, messageStrip, canvasHost, menuLayer, dialogLayer)
 
   let svg: SVGSVGElement | null = null
 
@@ -109,7 +109,7 @@ export function createApp(
 
   let panStart: { mx: number; my: number; vx: number; vy: number } | null = null
   canvasHost.addEventListener('pointerdown', (e) => {
-    if ((e.target as Element).closest('g.node')) return
+    if ((e.target as Element).closest('g.node, g.leaf')) return
     panStart = { mx: e.clientX, my: e.clientY, vx: state.view.x, vy: state.view.y }
   })
   canvasHost.addEventListener('pointermove', (e) => {
@@ -122,133 +122,251 @@ export function createApp(
     panStart = null
   })
   canvasHost.addEventListener('dblclick', (e) => {
-    if ((e.target as Element).closest('g.node')) return
+    if ((e.target as Element).closest('g.node, g.leaf')) return
     state.view = { scale: 1, x: 0, y: 0 }
     if (svg) applyViewTransform(svg, state.view)
   })
 
-  addBtn.addEventListener('click', () => {
-    if (state.root === null) {
-      state.creatingRoot = true
-      state.selected = null
-    } else {
-      // Judgment call: with an existing tree the button selects the root and
-      // opens its editor, where "Lägg till gren" lives.
-      state.selected = state.root
-      state.creatingRoot = false
-    }
-    render()
-  })
-
   const nextId = (): string => `n${++state.idCounter}`
 
-  const findIncoming = (node: TreeNode): { parent: TreeNode; edge: Outcome } | null => {
+  const setMessage = (text: string): void => {
+    state.message = text
+    messageStrip.textContent = text
+    messageStrip.style.display = text ? '' : 'none'
+  }
+
+  const guarded = (fn: () => void): void => {
+    try {
+      fn()
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const incomingEdge = (node: TreeNode): { parent: TreeNode; edge: Outcome } | null => {
     if (!node.parent) return null
-    const edge = node.parent.children.find((e) => e.child === node)
+    const edge = node.parent.outcomes.find((o) => o.child === node)
     return edge ? { parent: node.parent, edge } : null
   }
 
-  const historyFor = (node: TreeNode): Set<string> => {
-    const tokens: string[] = []
-    let current = node
-    let inc = findIncoming(current)
-    while (inc) {
-      tokens.unshift(branchLabel(inc.parent, inc.edge.label))
-      current = inc.parent
-      inc = findIncoming(current)
+  const nodeById = (id: string): TreeNode | null => {
+    const walk = (n: TreeNode): TreeNode | null => {
+      if (n.id === id) return n
+      for (const o of n.outcomes) {
+        if (o.child) {
+          const found = walk(o.child)
+          if (found) return found
+        }
+      }
+      return null
     }
-    return new Set(tokens)
+    return state.root ? walk(state.root) : null
   }
 
-  // ── API — every mutation goes through the segment-3 model layer ──
+  /** Display form of a condition token "nodeId:label" -> "NodLabel = label". */
+  const tokenDisplay = (token: string): string => {
+    const sep = token.indexOf(':')
+    const id = token.slice(0, sep)
+    const label = token.slice(sep + 1)
+    const node = nodeById(id)
+    return `${node ? node.label : id} = ${label}`
+  }
+
+  /** All condition tokens available to `node`: every outcome of every
+   * ancestor (all outcomes, not just the taken path — matches legacy). */
+  const availableTokens = (node: TreeNode): string[] => {
+    const tokens: string[] = []
+    for (let a = node.parent; a !== null; a = a.parent) {
+      for (const o of a.outcomes) tokens.push(branchLabel(a, o.label))
+    }
+    return tokens
+  }
+
+  // ── API — every mutation goes through the model layer ──
   const api: AppApi = {
-    createRoot(type, label, payoff) {
-      const node = new TreeNode(nextId(), type, label, payoff)
+    createRoot(type, label) {
+      const node = new TreeNode(nextId(), type, label)
       state.root = node
       state.selected = node
-      state.creatingRoot = false
-      state.message = ''
+      setMessage('')
       render()
       return node
     },
 
-    addChild(parent, spec) {
-      if (parent.children.some((e) => e.label === spec.edgeLabel)) {
-        throw new Error(`Grenen "${spec.edgeLabel}" finns redan på denna nod`)
-      }
-      const child = new TreeNode(nextId(), spec.type, spec.edgeLabel, spec.payoff)
-      // New outcome edges start with NaN probability — deliberately "unset",
-      // shown as "–" until the user fills it in. Never a fabricated 0.
-      const edge = new Outcome(spec.edgeLabel, NaN)
-      setChild(parent, edge, child)
+    addOutcomeTo(node, label, probability = NaN, value?) {
+      const edge = addOutcome(node, label, probability, value)
+      render()
+      return edge
+    },
+
+    attachChild(node, edge, type, label) {
+      const child = new TreeNode(nextId(), type, label)
+      setChild(node, edge, child)
       state.selected = child
-      state.message = ''
       render()
       return child
     },
 
-    deleteNode(node) {
-      const inc = findIncoming(node)
-      if (!inc) {
-        state.root = null
-      } else {
-        removeChild(inc.parent, inc.edge)
-      }
-      state.selected = null
-      state.message = ''
+    toggleType(node) {
+      node.nodeType = node.nodeType === 'chance' ? 'decision' : 'chance'
       render()
     },
 
-    setNodeLabel(node, label) {
+    renameNode(node, label) {
       node.label = label
       render()
     },
 
-    setPayoff(node, payoff) {
-      node.payoff = payoff
+    renameOutcomeOn(node, edge, newLabel) {
+      if (!state.root) return
+      renameOutcome(state.root, node, edge, newLabel)
       render()
     },
 
-    setEdgeProbability(edge, probability) {
+    removeOutcomeFrom(node, edge) {
+      removeOutcome(node, edge)
+      render()
+    },
+
+    setProbability(edge, probability) {
       edge.probability = probability
       render()
     },
 
-    renameEdge(parent, edge, newLabel) {
-      if (!state.root) return
-      renameEdgeLabel(state.root, parent, edge, newLabel)
+    setValue(edge, value) {
+      edge.value = value
       render()
     },
 
-    setConditionalEntries(edge, entries) {
-      edge.conditionalTable = entries
+    setConditionalTable(node, rows) {
+      node.conditionalTable = rows
       render()
     },
 
-    applyBackwardFill(target, targetProbability) {
+    deleteNode(node) {
+      const inc = incomingEdge(node)
+      if (!inc) {
+        state.root = null
+      } else {
+        detachChild(inc.edge)
+      }
+      if (state.selected === node) state.selected = null
+      render()
+    },
+
+    applyBackwardFill(node, edge, targetProbability) {
       if (!state.root) return
-      const result = backwardFill(state.root, target, targetProbability)
+      const result = backwardFill(state.root, node, edge, targetProbability)
       const parts = result.siblings.map(
         (s) => `${s.edge.label}: ${fmt(s.oldProbability)} → ${fmt(s.newProbability)}`,
       )
-      state.message =
+      setMessage(
         `Justerade P(${result.node.label} → ${result.edge.label}): ` +
-        `${fmt(result.oldProbability)} → ${fmt(result.newProbability)}` +
-        (parts.length > 0 ? ` · syskon omskalade: ${parts.join(', ')}` : '')
+          `${fmt(result.oldProbability)} → ${fmt(result.newProbability)}` +
+          (parts.length > 0 ? ` · syskon omskalade: ${parts.join(', ')}` : ''),
+      )
       render()
     },
 
     selectNode(node) {
       state.selected = node
-      state.creatingRoot = false
       render()
     },
 
     render,
   }
 
-  // ── Panel builders ──
-  const field = (labelText: string, input: HTMLElement): HTMLElement => {
+  // ── Context menu ──
+  const closeMenu = (): void => {
+    menuLayer.replaceChildren()
+  }
+
+  const menuItem = (label: string, onClick: () => void): HTMLButtonElement => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'menu-item'
+    b.textContent = label
+    b.addEventListener('click', () => {
+      closeMenu()
+      onClick()
+    })
+    return b
+  }
+
+  const openNodeMenu = (node: TreeNode, x: number, y: number): void => {
+    closeMenu()
+    const menu = document.createElement('div')
+    menu.className = 'menu'
+    const rect = container.getBoundingClientRect()
+    menu.style.left = `${x - rect.left}px`
+    menu.style.top = `${y - rect.top}px`
+
+    menu.append(
+      menuItem('✎ Byt namn', () => openNameDialog('Nodens namn', node.label, (v) =>
+        guarded(() => api.renameNode(node, v)),
+      )),
+      menuItem('☰ Redigera utfall', () => openOutcomesDialog(node)),
+      menuItem(
+        node.nodeType === 'chance' ? '⇄ Gör till beslutsnod' : '⇄ Gör till slumpnod',
+        () => guarded(() => api.toggleType(node)),
+      ),
+    )
+    if (node.nodeType === 'chance') {
+      menu.append(menuItem('⊞ Villkorstabell', () => openConditionalDialog(node)))
+    }
+    menu.append(
+      menuItem('✕ Ta bort nod', () => {
+        const inc = incomingEdge(node)
+        const what = inc
+          ? `"${node.label}" och hela dess delträd tas bort — utfallet "${inc.edge.label}" blir en slutpunkt igen`
+          : `Hela trädet tas bort`
+        if (confirmFn(`${what}. Fortsätt?`)) guarded(() => api.deleteNode(node))
+      }),
+    )
+
+    menuLayer.appendChild(menu)
+  }
+
+  container.addEventListener('click', (e) => {
+    if (!(e.target as Element).closest('.menu')) closeMenu()
+  })
+
+  // ── Dialogs ──
+  const closeDialog = (): void => {
+    dialogLayer.replaceChildren()
+  }
+
+  const openDialog = (titleText: string): { body: HTMLElement; footer: HTMLElement } => {
+    closeDialog()
+    const overlay = document.createElement('div')
+    overlay.className = 'dialog-overlay'
+    const dialog = document.createElement('div')
+    dialog.className = 'dialog'
+    const h = document.createElement('h2')
+    h.textContent = titleText
+    const body = document.createElement('div')
+    body.className = 'dialog-body'
+    const footer = document.createElement('div')
+    footer.className = 'dialog-footer'
+    dialog.append(h, body, footer)
+    overlay.appendChild(dialog)
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeDialog()
+    })
+    dialogLayer.appendChild(overlay)
+    return { body, footer }
+  }
+
+  const dialogButton = (label: string, onClick: () => void, primary = false): HTMLButtonElement => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.textContent = label
+    if (primary) b.className = 'primary'
+    b.addEventListener('click', onClick)
+    return b
+  }
+
+  const fieldRow = (labelText: string, input: HTMLElement): HTMLElement => {
     const wrap = document.createElement('label')
     wrap.className = 'field'
     const span = document.createElement('span')
@@ -257,300 +375,451 @@ export function createApp(
     return wrap
   }
 
-  const textInput = (value: string, onCommit: (v: string) => void): HTMLInputElement => {
+  const textInput = (value: string): HTMLInputElement => {
     const input = document.createElement('input')
     input.type = 'text'
     input.value = value
-    input.addEventListener('change', () => onCommit(input.value.trim()))
     return input
   }
 
-  const numberInput = (value: number, onCommit: (v: number) => void): HTMLInputElement => {
-    const input = document.createElement('input')
-    input.type = 'text'
-    input.inputMode = 'decimal'
-    input.value = Number.isFinite(value) ? String(value) : ''
-    input.addEventListener('change', () => onCommit(parseFloat(input.value.replace(',', '.'))))
-    return input
+  const parseNum = (raw: string): number => parseFloat(raw.trim().replace(',', '.'))
+
+  const openNameDialog = (
+    titleText: string,
+    initial: string,
+    onOk: (value: string) => void,
+  ): void => {
+    const { body, footer } = openDialog(titleText)
+    const input = textInput(initial)
+    body.appendChild(fieldRow('Namn', input))
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && input.value.trim()) {
+        closeDialog()
+        onOk(input.value.trim())
+      }
+    })
+    footer.append(
+      dialogButton('Avbryt', closeDialog),
+      dialogButton(
+        'OK',
+        () => {
+          if (!input.value.trim()) return
+          closeDialog()
+          onOk(input.value.trim())
+        },
+        true,
+      ),
+    )
+    input.focus()
   }
 
-  const button = (label: string, onClick: () => void): HTMLButtonElement => {
-    const b = document.createElement('button')
-    b.type = 'button'
-    b.textContent = label
-    b.addEventListener('click', onClick)
-    return b
-  }
-
-  const guarded = (fn: () => void): void => {
-    try {
-      fn()
-    } catch (e) {
-      state.message = e instanceof Error ? e.message : String(e)
-      render()
-    }
-  }
-
-  const typeSelect = (): HTMLSelectElement => {
+  const openCreateRootDialog = (): void => {
+    const { body, footer } = openDialog('Skapa rotnod')
     const select = document.createElement('select')
     for (const [value, text] of [
-      ['outcome', 'Slumpnod (outcome)'],
-      ['decision', 'Beslutsnod (decision)'],
-      ['leaf', 'Lövnod (leaf)'],
+      ['chance', 'Slumpnod'],
+      ['decision', 'Beslutsnod'],
     ] as const) {
       const opt = document.createElement('option')
       opt.value = value
       opt.textContent = text
       select.appendChild(opt)
     }
-    return select
-  }
-
-  const buildCreateForm = (
-    heading: string,
-    submitLabel: string,
-    onSubmit: (type: NodeType, label: string, payoff: number) => void,
-  ): HTMLElement => {
-    const form = document.createElement('div')
-    form.className = 'create-form'
-    const h = document.createElement('h3')
-    h.textContent = heading
-    form.appendChild(h)
-
-    const select = typeSelect()
-    const labelInput = document.createElement('input')
-    labelInput.type = 'text'
-    const payoffInput = document.createElement('input')
-    payoffInput.type = 'text'
-    payoffInput.inputMode = 'decimal'
-    const payoffField = field('Payoff (krävs för löv)', payoffInput)
-
-    const syncPayoffVisibility = (): void => {
-      payoffField.style.display = select.value === 'leaf' ? '' : 'none'
-    }
-    select.addEventListener('change', syncPayoffVisibility)
-    syncPayoffVisibility()
-
-    form.append(
-      field('Typ', select),
-      field('Etikett', labelInput),
-      payoffField,
-      button(submitLabel, () =>
-        guarded(() => {
+    const labelInput = textInput('')
+    body.append(fieldRow('Typ', select), fieldRow('Namn', labelInput))
+    footer.append(
+      dialogButton('Avbryt', closeDialog),
+      dialogButton(
+        'Skapa',
+        () => {
           const label = labelInput.value.trim()
-          if (!label) throw new Error('Etikett krävs')
-          const payoff = parseFloat(payoffInput.value.replace(',', '.'))
-          if (select.value === 'leaf' && !Number.isFinite(payoff)) {
-            throw new Error('En lövnod måste ha ett numeriskt payoff-värde')
-          }
-          onSubmit(select.value as NodeType, label, payoff)
-        }),
+          if (!label) return
+          closeDialog()
+          guarded(() => api.createRoot(select.value as NodeType, label))
+        },
+        true,
       ),
     )
-    return form
+    labelInput.focus()
   }
 
-  const buildConditionalEditor = (edge: Outcome, node: TreeNode): HTMLElement => {
-    const section = document.createElement('div')
-    section.className = 'conditional-editor'
-    const h = document.createElement('h3')
-    h.textContent = 'Villkorstabell (ingående gren)'
-    section.appendChild(h)
+  /** Legacy-style outcome editor: rows of label (+ probability for chance
+   * nodes), explicit Normalisera button — never silent normalization. */
+  const openOutcomesDialog = (node: TreeNode): void => {
+    const isChance = node.nodeType === 'chance'
+    const { body, footer } = openDialog(`Utfall — ${node.label}`)
 
-    const rows: { condition: HTMLInputElement; prob: HTMLInputElement }[] = []
+    interface Row {
+      edge: Outcome | null
+      labelInput: HTMLInputElement
+      probInput: HTMLInputElement | null
+      removed: boolean
+      el: HTMLElement
+    }
+    const rows: Row[] = []
     const rowsHost = document.createElement('div')
+    const warning = document.createElement('p')
+    warning.className = 'dialog-warning'
+    warning.style.display = 'none'
 
-    const addRow = (conditionText: string, probText: string): void => {
-      const row = document.createElement('div')
-      row.className = 'conditional-row'
-      const condition = document.createElement('input')
-      condition.type = 'text'
-      condition.value = conditionText
-      condition.placeholder = 'villkor, kommaseparerade'
-      const prob = document.createElement('input')
-      prob.type = 'text'
-      prob.inputMode = 'decimal'
-      prob.value = probText
-      prob.placeholder = 'p'
-      const entry = { condition, prob }
-      rows.push(entry)
-      row.append(
-        condition,
-        prob,
-        button('✕', () => {
-          rows.splice(rows.indexOf(entry), 1)
-          row.remove()
-        }),
-      )
-      rowsHost.appendChild(row)
-    }
-
-    for (const entry of edge.conditionalTable) {
-      addRow([...entry.condition].sort().join(','), String(entry.probability))
-    }
-    section.appendChild(rowsHost)
-
-    section.appendChild(button('+ villkor', () => addRow('', '')))
-    section.appendChild(
-      button('Spara villkor', () =>
-        guarded(() => {
-          const entries: ConditionalEntry[] = rows.map((r) => {
-            const tokens = r.condition.value
-              .split(',')
-              .map((s) => s.trim())
-              .filter((s) => s.length > 0)
-            const probability = parseFloat(r.prob.value.replace(',', '.'))
-            if (tokens.length === 0) throw new Error('Ett villkor saknar tokens')
-            if (!Number.isFinite(probability)) throw new Error('Ett villkor saknar sannolikhet')
-            return { condition: new Set(tokens), probability }
-          })
-          api.setConditionalEntries(edge, entries)
-        }),
-      ),
-    )
-
-    const history = historyFor(node)
-    if (history.size > 0) {
-      const hint = document.createElement('p')
-      hint.className = 'hint'
-      hint.textContent = `Tillgängliga tokens på denna path: ${[...history].join(', ')}`
-      section.appendChild(hint)
-    }
-    return section
-  }
-
-  const buildNodePanel = (node: TreeNode): void => {
-    const inc = findIncoming(node)
-
-    const typeLine = document.createElement('p')
-    typeLine.className = 'node-meta'
-    typeLine.textContent = `${node.nodeType} · id ${node.id}`
-    panel.appendChild(typeLine)
-
-    panel.appendChild(
-      field(
-        'Nodetikett',
-        textInput(node.label, (v) => guarded(() => api.setNodeLabel(node, v || node.label))),
-      ),
-    )
-
-    if (node.nodeType === 'leaf') {
-      panel.appendChild(
-        field(
-          'Payoff',
-          numberInput(node.payoff ?? NaN, (v) =>
-            guarded(() => {
-              if (!Number.isFinite(v)) throw new Error('Payoff måste vara ett tal')
-              api.setPayoff(node, v)
-            }),
-          ),
-        ),
-      )
-
-      const bf = document.createElement('div')
-      bf.className = 'backfill'
-      const h = document.createElement('h3')
-      h.textContent = 'Sätt joint probability (backward-fill)'
-      const target = document.createElement('input')
-      target.type = 'text'
-      target.inputMode = 'decimal'
-      target.placeholder = 'mål-sannolikhet (0–1]'
-      bf.append(
-        h,
-        field('Mål', target),
-        button('Beräkna bakåt', () =>
-          guarded(() => api.applyBackwardFill(node, parseFloat(target.value.replace(',', '.')))),
-        ),
-      )
-      panel.appendChild(bf)
-    }
-
-    if (inc) {
-      const h = document.createElement('h3')
-      h.textContent = 'Ingående gren'
-      panel.appendChild(h)
-      panel.appendChild(
-        field(
-          'Gren-etikett',
-          textInput(inc.edge.label, (v) =>
-            guarded(() => api.renameEdge(inc.parent, inc.edge, v || inc.edge.label)),
-          ),
-        ),
-      )
-      if (inc.parent.nodeType === 'outcome') {
-        panel.appendChild(
-          field(
-            'Sannolikhet (bas)',
-            numberInput(inc.edge.probability, (v) =>
-              guarded(() => api.setEdgeProbability(inc.edge, v)),
-            ),
-          ),
-        )
-        panel.appendChild(buildConditionalEditor(inc.edge, node))
+    const updateWarning = (): void => {
+      if (!isChance) return
+      let sum = 0
+      let anyNaN = false
+      for (const r of rows) {
+        if (r.removed || !r.probInput) continue
+        const v = parseNum(r.probInput.value)
+        if (Number.isNaN(v)) anyNaN = true
+        else sum += v
+      }
+      const active = rows.filter((r) => !r.removed)
+      if (active.length === 0) {
+        warning.style.display = 'none'
+        return
+      }
+      if (anyNaN) {
+        warning.textContent = 'p ofullständig — tomma sannolikheter visas som "–" i trädet'
+        warning.style.display = ''
+      } else if (Math.abs(sum - 1) > 1e-6) {
+        warning.textContent = `⚠ Summan är ${fmt(sum)}, förväntat 1`
+        warning.style.display = ''
+      } else {
+        warning.style.display = 'none'
       }
     }
 
-    if (node.nodeType !== 'leaf') {
-      panel.appendChild(
-        buildCreateForm('Lägg till gren', 'Lägg till gren', (type, label, payoff) =>
-          api.addChild(node, {
-            type,
-            edgeLabel: label,
-            payoff: type === 'leaf' ? payoff : undefined,
+    const addRow = (edge: Outcome | null): void => {
+      const el = document.createElement('div')
+      el.className = 'dialog-row'
+      const labelInput = textInput(edge ? edge.label : '')
+      labelInput.placeholder = 'etikett'
+      let probInput: HTMLInputElement | null = null
+      el.appendChild(labelInput)
+      if (isChance) {
+        probInput = textInput(edge && Number.isFinite(edge.probability) ? String(edge.probability) : '')
+        probInput.placeholder = 'p'
+        probInput.className = 'prob'
+        probInput.addEventListener('input', updateWarning)
+        el.appendChild(probInput)
+      }
+      const row: Row = { edge, labelInput, probInput, removed: false, el }
+      el.appendChild(
+        dialogButton('✕', () => {
+          if (edge?.child && !confirmFn(`Utfallet "${edge.label}" har ett delträd som tas bort. Fortsätt?`)) {
+            return
+          }
+          row.removed = true
+          el.remove()
+          updateWarning()
+        }),
+      )
+      rows.push(row)
+      rowsHost.appendChild(el)
+    }
+
+    for (const edge of node.outcomes) addRow(edge)
+    body.append(rowsHost, warning)
+
+    const actions = document.createElement('div')
+    actions.className = 'dialog-actions'
+    actions.appendChild(dialogButton('+ utfall', () => addRow(null)))
+    if (isChance) {
+      actions.appendChild(
+        dialogButton('Normalisera', () => {
+          const active = rows.filter((r) => !r.removed && r.probInput)
+          const vals = active.map((r) => parseNum(r.probInput!.value))
+          if (vals.some((v) => Number.isNaN(v))) {
+            const even = 1 / active.length
+            for (const r of active) r.probInput!.value = String(parseFloat(even.toPrecision(6)))
+          } else {
+            const sum = vals.reduce((s, v) => s + v, 0)
+            if (sum <= 0) return
+            active.forEach((r, i) => {
+              r.probInput!.value = String(parseFloat((vals[i] / sum).toPrecision(6)))
+            })
+          }
+          updateWarning()
+        }),
+      )
+    }
+    body.appendChild(actions)
+    updateWarning()
+
+    footer.append(
+      dialogButton('Avbryt', closeDialog),
+      dialogButton(
+        'Spara',
+        () =>
+          guarded(() => {
+            const active = rows.filter((r) => !r.removed)
+            const labels = active.map((r) => r.labelInput.value.trim())
+            if (labels.some((l) => !l)) throw new Error('Alla utfall måste ha en etikett')
+            if (new Set(labels).size !== labels.length) {
+              throw new Error('Utfallsetiketter måste vara unika inom noden')
+            }
+
+            for (const r of rows) {
+              if (r.removed && r.edge) removeOutcome(node, r.edge)
+            }
+            for (const r of active) {
+              const label = r.labelInput.value.trim()
+              const prob = r.probInput ? parseNum(r.probInput.value) : NaN
+              if (r.edge) {
+                if (r.edge.label !== label && state.root) {
+                  renameOutcome(state.root, node, r.edge, label)
+                }
+                r.edge.probability = prob
+              } else {
+                addOutcome(node, label, prob)
+              }
+            }
+            closeDialog()
+            render()
           }),
-        ),
-      )
-    }
-
-    const del = button('Ta bort nod (med hela delträdet)', () => {
-      if (confirmFn(`Ta bort "${node.label}" och hela dess delträd?`)) {
-        guarded(() => api.deleteNode(node))
-      }
-    })
-    del.className = 'danger'
-    panel.appendChild(del)
+        true,
+      ),
+    )
   }
 
-  const buildPanel = (): void => {
-    panel.replaceChildren()
-
-    if (state.message) {
-      const msg = document.createElement('p')
-      msg.className = 'message'
-      msg.textContent = state.message
-      panel.appendChild(msg)
-    }
-
-    if (state.creatingRoot) {
-      panel.appendChild(
-        buildCreateForm('Skapa rotnod', 'Skapa', (type, label, payoff) =>
-          api.createRoot(type, label, type === 'leaf' ? payoff : undefined),
-        ),
-      )
+  /** Legacy-style conditional matrix: rows = conditions, columns = the
+   * node's outcomes. The base row edits the outcomes' base probabilities. */
+  const openConditionalDialog = (node: TreeNode): void => {
+    const { body, footer } = openDialog(`Villkorstabell — ${node.label}`)
+    const outcomeLabels = node.outcomes.map((o) => o.label)
+    if (outcomeLabels.length === 0) {
+      body.textContent = 'Noden har inga utfall än — lägg till utfall först.'
+      footer.appendChild(dialogButton('Stäng', closeDialog, true))
       return
     }
 
-    if (!state.selected) {
+    const table = document.createElement('table')
+    table.className = 'matrix'
+    const thead = document.createElement('thead')
+    const headRow = document.createElement('tr')
+    headRow.appendChild(document.createElement('th')).textContent = 'Villkor'
+    for (const label of outcomeLabels) {
+      headRow.appendChild(document.createElement('th')).textContent = label
+    }
+    headRow.appendChild(document.createElement('th'))
+    thead.appendChild(headRow)
+    table.appendChild(thead)
+    const tbody = document.createElement('tbody')
+    table.appendChild(tbody)
+
+    interface MatrixRow {
+      condition: Set<string> | null // null = base row
+      inputs: HTMLInputElement[]
+      removed: boolean
+      el: HTMLTableRowElement
+    }
+    const matrixRows: MatrixRow[] = []
+
+    const addMatrixRow = (condition: Set<string> | null, values: (number | undefined)[]): void => {
+      const tr = document.createElement('tr')
+      const condCell = document.createElement('td')
+      condCell.textContent = condition
+        ? [...condition].map(tokenDisplay).join(' & ')
+        : '(bas)'
+      if (!condition) condCell.className = 'base'
+      tr.appendChild(condCell)
+
+      const inputs: HTMLInputElement[] = []
+      for (const v of values) {
+        const td = document.createElement('td')
+        const input = textInput(v !== undefined && Number.isFinite(v) ? String(v) : '')
+        input.className = 'prob'
+        inputs.push(input)
+        td.appendChild(input)
+        tr.appendChild(td)
+      }
+
+      const row: MatrixRow = { condition, inputs, removed: false, el: tr }
+      const actionCell = document.createElement('td')
+      if (condition) {
+        actionCell.appendChild(
+          dialogButton('✕', () => {
+            row.removed = true
+            tr.remove()
+          }),
+        )
+      }
+      tr.appendChild(actionCell)
+      matrixRows.push(row)
+      tbody.appendChild(tr)
+    }
+
+    addMatrixRow(null, node.outcomes.map((o) => o.probability))
+    for (const row of node.conditionalTable) {
+      addMatrixRow(new Set(row.condition), outcomeLabels.map((l) => row.probabilities[l]))
+    }
+
+    body.appendChild(table)
+
+    // Add-condition picker: one ancestor-outcome token per new row.
+    const tokens = availableTokens(node)
+    const picker = document.createElement('select')
+    for (const token of tokens) {
+      const opt = document.createElement('option')
+      opt.value = token
+      opt.textContent = tokenDisplay(token)
+      picker.appendChild(opt)
+    }
+    const pickerRow = document.createElement('div')
+    pickerRow.className = 'dialog-actions'
+    pickerRow.append(
+      picker,
+      dialogButton('+ villkor', () => {
+        if (!picker.value) return
+        addMatrixRow(new Set([picker.value]), outcomeLabels.map(() => undefined))
+      }),
+    )
+    if (tokens.length === 0) {
       const hint = document.createElement('p')
       hint.className = 'hint'
-      hint.textContent = state.root
-        ? 'Klicka på en nod i trädet för att redigera den.'
-        : 'Klicka "Lägg till nod" för att börja.'
-      panel.appendChild(hint)
-      return
+      hint.textContent = 'Inga villkor tillgängliga — noden har inga förfäder med utfall.'
+      body.appendChild(hint)
+    } else {
+      body.appendChild(pickerRow)
     }
 
-    buildNodePanel(state.selected)
+    footer.append(
+      dialogButton('Avbryt', closeDialog),
+      dialogButton(
+        'Spara',
+        () =>
+          guarded(() => {
+            const base = matrixRows[0]
+            node.outcomes.forEach((o, i) => {
+              o.probability = parseNum(base.inputs[i].value)
+            })
+            const rows: ConditionalRow[] = []
+            for (const row of matrixRows.slice(1)) {
+              if (row.removed || !row.condition) continue
+              const probabilities: Record<string, number> = {}
+              outcomeLabels.forEach((label, i) => {
+                const v = parseNum(row.inputs[i].value)
+                if (!Number.isNaN(v)) probabilities[label] = v
+              })
+              rows.push({ condition: row.condition, probabilities })
+            }
+            api.setConditionalTable(node, rows)
+            closeDialog()
+          }),
+        true,
+      ),
+    )
   }
+
+  /** Terminal-outcome dialog: payoff + target joint probability (changed
+   * fields only, like legacy), plus attaching a child node to grow the tree. */
+  const openTerminalDialog = (node: TreeNode, edge: Outcome): void => {
+    const { body, footer } = openDialog(`${node.label} → ${edge.label}`)
+
+    const valueInput = textInput(edge.value !== undefined ? String(edge.value) : '')
+    valueInput.placeholder = 'osatt'
+    const initialValue = valueInput.value
+    body.appendChild(fieldRow('Värde (payoff)', valueInput))
+
+    const jointInput = textInput('')
+    jointInput.placeholder = 'mål-sannolikhet (0–1]'
+    body.appendChild(fieldRow('Sätt joint probability (backward-fill)', jointInput))
+
+    const grow = document.createElement('div')
+    grow.className = 'dialog-actions'
+    grow.appendChild(
+      dialogButton('+ Lägg till barnnod…', () => {
+        closeDialog()
+        openAttachChildDialog(node, edge)
+      }),
+    )
+    body.appendChild(grow)
+
+    footer.append(
+      dialogButton('Avbryt', closeDialog),
+      dialogButton(
+        'OK',
+        () =>
+          guarded(() => {
+            if (valueInput.value !== initialValue) {
+              const raw = valueInput.value.trim()
+              if (raw === '') {
+                api.setValue(edge, undefined)
+              } else {
+                const v = parseNum(raw)
+                if (Number.isNaN(v)) throw new Error('Värdet måste vara ett tal')
+                api.setValue(edge, v)
+              }
+            }
+            const jointRaw = jointInput.value.trim()
+            closeDialog()
+            if (jointRaw !== '') {
+              api.applyBackwardFill(node, edge, parseNum(jointRaw))
+            }
+          }),
+        true,
+      ),
+    )
+    valueInput.focus()
+  }
+
+  const openAttachChildDialog = (node: TreeNode, edge: Outcome): void => {
+    const { body, footer } = openDialog(`Ny nod efter "${edge.label}"`)
+    const select = document.createElement('select')
+    for (const [value, text] of [
+      ['chance', 'Slumpnod'],
+      ['decision', 'Beslutsnod'],
+    ] as const) {
+      const opt = document.createElement('option')
+      opt.value = value
+      opt.textContent = text
+      select.appendChild(opt)
+    }
+    const labelInput = textInput('')
+    body.append(fieldRow('Typ', select), fieldRow('Namn', labelInput))
+    footer.append(
+      dialogButton('Avbryt', closeDialog),
+      dialogButton(
+        'Skapa',
+        () => {
+          const label = labelInput.value.trim()
+          if (!label) return
+          closeDialog()
+          guarded(() => api.attachChild(node, edge, select.value as NodeType, label))
+        },
+        true,
+      ),
+    )
+    labelInput.focus()
+  }
+
+  addBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    if (state.root === null) {
+      openCreateRootDialog()
+    } else {
+      setMessage(
+        'Trädet har redan en rot — klicka på en nod för att redigera, eller på en triangel för att bygga vidare.',
+      )
+    }
+  })
 
   function render(): void {
     svg = renderTree(canvasHost, state.root, {
       selected: state.selected,
       view: state.view,
-      onNodeClick: (node) => api.selectNode(node),
-      onBackgroundClick: () => api.selectNode(null),
+      onNodeClick: (node, e) => {
+        api.selectNode(node)
+        openNodeMenu(node, e.clientX, e.clientY)
+      },
+      onLeafClick: (node, edge) => {
+        openTerminalDialog(node, edge)
+      },
+      onBackgroundClick: () => {
+        state.selected = null
+        closeMenu()
+        render()
+      },
     })
-    buildPanel()
   }
 
   render()

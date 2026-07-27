@@ -1,71 +1,88 @@
 import { describe, expect, it } from 'vitest'
 import { calculateExpectedValue } from './expectedValue'
-import { Outcome, setChild, TreeNode } from './tree'
+import { addOutcome, setChild, TreeNode } from './tree'
 
 /**
- * Tree under test:
- *
  * root (decision)
- * ├─ "A" -> oa (outcome)
- * │         ├─ "X" p=0.5 -> leafX (leaf, payoff 20)
- * │         └─ "Y" p=0.5 -> ob (outcome)
- * │                          ├─ "P" p=0.25 -> leafP (leaf, payoff 100)
- * │                          └─ "Q" p=0.75 -> leafQ (leaf, payoff 0)
- * └─ "B" -> leafB (leaf, payoff 10)
+ * ├─ "A" -> oa (chance)
+ * │         ├─ "X" p=0.5, value 20
+ * │         └─ "Y" p=0.5 -> ob (chance)
+ * │                          ├─ "P" p=0.25, value 100
+ * │                          └─ "Q" p=0.75, value 0
+ * └─ "B" value 10
  *
  * Hand calculation:
- *   EV(ob)   = 0.25*100 + 0.75*0   = 25
- *   EV(oa)   = 0.5*20 + 0.5*25     = 22.5
- *   EV(root) = max(EV(oa), EV(leafB)) = max(22.5, 10) = 22.5
+ *   EV(ob)   = 0.25·100 + 0.75·0   = 25
+ *   EV(oa)   = 0.5·20 + 0.5·25    = 22.5
+ *   EV(root) = max(EV(oa), 10)    = 22.5
  */
 function buildTree() {
   const root = new TreeNode('root', 'decision', 'Root')
-  const oa = new TreeNode('oa', 'outcome', 'OA')
-  const ob = new TreeNode('ob', 'outcome', 'OB')
-  const leafX = new TreeNode('leafX', 'leaf', 'X', 20)
-  const leafP = new TreeNode('leafP', 'leaf', 'P', 100)
-  const leafQ = new TreeNode('leafQ', 'leaf', 'Q', 0)
-  const leafB = new TreeNode('leafB', 'leaf', 'B', 10)
+  const oa = new TreeNode('oa', 'chance', 'OA')
+  const ob = new TreeNode('ob', 'chance', 'OB')
 
-  setChild(root, new Outcome('A', 1), oa)
-  setChild(root, new Outcome('B', 1), leafB)
-  setChild(oa, new Outcome('X', 0.5), leafX)
-  setChild(oa, new Outcome('Y', 0.5), ob)
-  setChild(ob, new Outcome('P', 0.25), leafP)
-  setChild(ob, new Outcome('Q', 0.75), leafQ)
+  const edgeA = addOutcome(root, 'A')
+  const edgeB = addOutcome(root, 'B', NaN, 10)
+  setChild(root, edgeA, oa)
 
-  return { root, oa, ob, leafX, leafP, leafQ, leafB }
+  addOutcome(oa, 'X', 0.5, 20)
+  const edgeY = addOutcome(oa, 'Y', 0.5)
+  setChild(oa, edgeY, ob)
+
+  addOutcome(ob, 'P', 0.25, 100)
+  addOutcome(ob, 'Q', 0.75, 0)
+
+  return { root, oa, ob, edgeB }
 }
 
 describe('calculateExpectedValue', () => {
-  it('returns the payoff for a leaf', () => {
-    const { leafB } = buildTree()
-    expect(calculateExpectedValue(leafB)).toBe(10)
-  })
-
-  it('computes the weighted average for an outcome node', () => {
+  it('computes the weighted average for a chance node with terminal outcomes', () => {
     const { ob } = buildTree()
     expect(calculateExpectedValue(ob)).toBeCloseTo(25)
   })
 
-  it('propagates correctly through a nested outcome node', () => {
+  it('propagates through nested chance nodes', () => {
     const { oa } = buildTree()
     expect(calculateExpectedValue(oa)).toBeCloseTo(22.5)
   })
 
-  it('computes the max over children for a decision node', () => {
+  it('takes the max over alternatives for a decision node', () => {
     const { root } = buildTree()
     expect(calculateExpectedValue(root)).toBeCloseTo(22.5)
   })
 
-  it('picks the other branch when it becomes the better one', () => {
-    const { root, leafB } = buildTree()
-    leafB.payoff = 999
+  it('picks the other alternative when it becomes the better one', () => {
+    const { root, edgeB } = buildTree()
+    edgeB.value = 999
     expect(calculateExpectedValue(root)).toBeCloseTo(999)
   })
 
-  it('throws for a non-leaf node with no children', () => {
+  it('applies conditional rows via the path history', () => {
+    // root (chance) -A-> mid (chance), mid's distribution depends on root:A.
+    const root = new TreeNode('root', 'chance', 'Root')
+    const mid = new TreeNode('mid', 'chance', 'Mid')
+    const edgeA = addOutcome(root, 'A', 1)
+    setChild(root, edgeA, mid)
+    addOutcome(mid, 'X', 0.5, 10)
+    addOutcome(mid, 'Y', 0.5, 0)
+    mid.conditionalTable = [
+      { condition: new Set(['root:A']), probabilities: { X: 0.9, Y: 0.1 } },
+    ]
+    // Via root, history contains root:A => EV(mid|A) = 0.9·10 = 9.
+    expect(calculateExpectedValue(root)).toBeCloseTo(9)
+    // Standalone, no history => base 0.5/0.5 => 5.
+    expect(calculateExpectedValue(mid)).toBeCloseTo(5)
+  })
+
+  it('returns NaN when a terminal value is unset (never fabricates)', () => {
+    const node = new TreeNode('n', 'chance', 'N')
+    addOutcome(node, 'A', 0.5, 10)
+    addOutcome(node, 'B', 0.5) // no value
+    expect(Number.isNaN(calculateExpectedValue(node))).toBe(true)
+  })
+
+  it('throws for a node with no outcomes', () => {
     const empty = new TreeNode('empty', 'decision', 'Empty')
-    expect(() => calculateExpectedValue(empty)).toThrow(/no children/)
+    expect(() => calculateExpectedValue(empty)).toThrow(/no outcomes/)
   })
 })
