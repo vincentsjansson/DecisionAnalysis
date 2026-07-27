@@ -33,20 +33,21 @@ Dessa är redan förhindrade av TS-modellens grundarkitektur (ett villkorsformat
 - **Tre olika toleranser för sannolikhetssumma** i olika lager (1e-5 i UI-varningen, 0.01 i spara-spärren, 1e-6 i backend).
 - **Kantetiketter placerades blint** på Bézier-mittpunkten med fasta pixel-offsets, ingen kollisionshantering — bekräftar "label overlap"-buggen från den ursprungliga checklistan.
 
-## Nodtyper
+## Nodtyper (reviderat beslut 2026-07-27)
 
-- ✅ Tre nodtyper: `outcome`, `decision`, `leaf`. Explicit `nodeType`-fält i modellen (`src/model/tree.ts`).
+- ✅ **Två** nodtyper: `decision` och `chance`, med explicit `nodeType`-fält (`src/model/tree.ts`). **Utfallen är kanterna** från noden (`Outcome`), och ett terminalt utfall (utan barn) är slutpunkten och bär payoff-värdet (`Outcome.value`) — det finns ingen separat lövnodtyp. Detta matchar läroboksmodellen och legacy's semantik, och löser både namnkollisionen (`Outcome`-klass vs `'outcome'`-nodtyp) och etikettdupliceringen som den tidigare tre-typsmodellen hade.
 
 ## Datamodell
 
-- ✅ `TreeNode` / `Outcome` i TS (`src/model/tree.ts`), med `nodeType`, payoff-fält på lövnoder (konstruktor kastar om payoff saknas på leaf eller sätts på icke-leaf).
-- ✅ Villkorad sannolikhet per path (subset-matchning mot history-set): portad till `src/model/conditionalProbability.ts`. **Tie-break-frågan är låst:** flera lika specifika matchande conditions kastar `AmbiguousConditionalProbabilityError` istället för att tyst välja en (se "Bekräftad regel att inte återupprepa"-andan — samma princip applicerad här).
-- ✅ Cykel-skydd vid nod-koppling: `setChild` (`src/model/tree.ts`) går upp genom `parent`-kedjan och kastar `CyclicTreeError` om `child` redan är en förfader (inkl. self-loop).
+- ✅ `TreeNode` / `Outcome` i TS (`src/model/tree.ts`): `addOutcome` (unika syskon-etiketter), `setChild`/`detachChild`/`removeOutcome`/`renameOutcome`. Osatt sannolikhet = `NaN`, osatt payoff = `undefined` — visas som "–", aldrig fabricerade nollor.
+- ✅ Villkorstabeller lagras **per nod** (reviderat 2026-07-27, som legacy): varje rad = villkor (set av `nodId:utfall`-tokens) → komplett fördelning över nodens utfall. Radsumma-1 är därmed strukturellt naturlig, till skillnad från per-kant-overrides. Subset-matchning mot history, mest specifika rad vinner, lika specifika kastar `AmbiguousConditionalProbabilityError` (`src/model/conditionalProbability.ts`). Utfall som en matchande rad inte täcker faller tillbaka på bassannolikheten.
+- ✅ Cykel-skydd vid nod-koppling: `setChild` går upp genom `parent`-kedjan och kastar `CyclicTreeError` om barnet redan är en förfader (inkl. self-loop).
+- ✅ `renameOutcome` skriver om både nodens egna villkorsraders nycklar och alla `nodId:etikett`-tokens i hela trädet — rename kan inte tyst döda villkor (legacy-buggen).
 
 ## Beräkningar
 
-- ✅ EV per nod: slumpnoder = viktat medelvärde av barnens EV; beslutsnoder = max av barnens EV. Rekursiv, fungerar på varje nod i trädet, inte bara löven (`src/model/expectedValue.ts`).
-- ✅ Backward-fill: `src/model/backwardFill.ts` — justerar första justerbara noden längs pathen (slumpnod, >1 utfall, ej styrd av matchande villkorstabell), löser ut kantsannolikheten mot mål-joint-sannolikheten, omskalar syskon proportionellt. Returnerar full rapport (nod, kant, gammal/ny, syskonjusteringar) som UI:t visar — aldrig tyst (låst beslut #3). Kastar `BackwardFillError` vid onåbart mål.
+- ✅ EV per nod: slumpnoder = viktat medelvärde över utfallen (terminalt utfall bidrar med sitt `value`, barn med sitt EV); beslutsnoder = max. Rekursiv, fungerar på varje nod i trädet (`src/model/expectedValue.ts`).
+- ✅ Backward-fill: `src/model/backwardFill.ts` — målet är ett terminalt utfall; justerar första justerbara noden längs pathen (slumpnod, >1 utfall, ej styrd av matchande villkorsrad), löser ut sannolikheten mot mål-joint, omskalar syskon proportionellt. Returnerar full rapport (nod, utfall, gammal/ny, syskonjusteringar) som UI:t visar i meddelanderaden — aldrig tyst (låst beslut #3). Kastar `BackwardFillError` vid onåbart mål.
 - ❌ VOC (Value of Clairvoyance).
 - ❌ Beräkningssteg-visning (pedagogisk, t.ex. "0.3 × 8 + 0.7 × 2 = 4.2").
 - ✅ Sannolikhetsvalidering: `src/model/validateProbabilities.ts` kastar `ProbabilitySumError` (med nod-id och faktisk summa) om villkorade sannolikheter för en nod inte summerar till 1 inom tolerans 1e-6 — normaliserar inte tyst. UI:t visar varningen icke-blockerande på noden ("Σ = 0.6 ⚠"), och skiljer på *fel* summa och *ofullständig* data ("p ofullständig" när sannolikheter är osatta).
@@ -56,20 +57,20 @@ Dessa är redan förhindrade av TS-modellens grundarkitektur (ett villkorsformat
 - ❌ Flip = vänd trädet runt; split = resultatet, två oberoende trädvyer sida vid sida. **Låst beslut:** kräver riktig Bayes-omvändning (marginaler + posteriorer), inte legacy's oförändrade sannolikhetskopiering — se "Lärdomar från legacy-genomgången". Eget, dedikerat framtida segment — **inte** en del av det kommande rendering/UI-segmentet.
 - Krav: verifiera vid bygge att de två träden är helt oberoende (inga delade referenser).
 
-## Rendering / UI
+## Rendering / UI (interaktionsmodell reviderad 2026-07-27 efter legacy-analysen)
 
-- ✅ SVG-rendering av trädet (`src/render/`), fullt idempotent redraw (rensa + bygg om, inga ackumulerande lyssnare). Nodtyper åtskiljs med form, inte färg: rektangel = beslut, ellips = slump, triangel = löv.
-- ✅ Bézier-kurvor för grenar, etiketter med upplöst sannolikhet (via segment-3-resolvern). Etiketter placeras vid t=0.75 längs kurvan där syskonkurvor divergerat — ingen blind mittpunktsplacering, verifierat separerade vid 3–4 utfall per nod (legacy-buggen).
+- ✅ SVG-rendering av trädet (`src/render/`), fullt idempotent redraw (rensa + bygg om, inga ackumulerande lyssnare). Former, inte färger: rektangel = beslutsnod, ellips = slumpnod, triangel = terminalt utfall (med payoff och joint path-sannolikhet).
+- ✅ Bézier-kurvor för grenar, etiketter med upplöst sannolikhet. Etiketter placeras vid t=0.75 längs kurvan där syskonkurvor divergerat — verifierat separerade vid 3–4 utfall per nod (legacy-buggen). Beslutsnoders alternativ visar ingen sannolikhet.
 - ✅ Zoom/pan begränsad till canvas-ytan (transform på SVG-viewporten; toppmenyn är vanlig HTML utanför). Dubbelklick återställer zoom.
 - ✅ Leaf-spacing auto-expand mot overlap, omräknas varje redraw.
-- ✅ Svart-vitt tema rakt igenom (inklusive alla paneler/formulär — inga färgbärande avvikelser).
-- ✅ Interaktiv redigering: skapa rot (typval), lägg till gren på vald nod (äkta asymmetriska träd — låst beslut #1), inline-redigering av etikett/payoff/sannolikhet/villkorstabell, ta bort delträd med bekräftelse. Alla mutationer går via segment-3-modellens validerade funktioner (`setChild` med cykel-skydd, `removeChild`, `renameEdgeLabel` som skriver om villkorstokens vid namnbyte).
-- ✅ Live EV per nod och upplöst sannolikhet per kant — uppdateras direkt vid varje ändring, ingen "beräkna"-knapp. Ofullständig data (osatt sannolikhet, barnlös icke-lövnod) visas som "–", aldrig fabricerade värden. Nya kanter skapas med **osatt** (NaN) sannolikhet, inte 0.
+- ✅ Svart-vitt tema rakt igenom, inklusive alla dialoger (legacy's lila villkorsdialog upprepas inte).
+- ✅ **Legacy's interaktionsmodell:** klick på nod → kompakt kontextmeny (Byt namn / Redigera utfall / Växla typ / Villkorstabell / Ta bort nod), varje val öppnar en fokuserad dialog. Klick på terminalt utfall (triangel) → dialog med payoff + mål-joint-sannolikhet (backward-fill) + "Lägg till barnnod" (så växer trädet — äkta asymmetriska träd). Utfallsredigeraren har en **explicit** Normalisera-knapp och Σ-varning — normaliserar aldrig tyst. Villkorstabellen redigeras som matris (rader = villkor valda ur förfädernas utfall, kolumner = nodens utfall, "(bas)"-raden = bassannolikheterna).
+- ✅ Live EV per nod och upplöst sannolikhet per utfall — uppdateras direkt vid varje ändring, ingen "beräkna"-knapp. Ofullständig data (osatt sannolikhet/payoff, nod utan utfall) visas som "–", aldrig fabricerade värden. Nya utfall skapas med **osatt** (NaN) sannolikhet, inte 0. Backward-fill-rapporter och fel visas i meddelanderaden under toppmenyn.
 - ❌ Mirrored layout för höger träd i split-läge (hör till flip/split-segmentet).
 
 ## Spara / ladda
 
-- ⚠️ Serialisering/deserialisering (`src/model/serialization.ts`) är klar och round-trip-testad (EV och conditional_tables identiska efter spara→ladda), snake_case-fältnamn (`conditional_tables`) enligt regeln ovan. **Fortfarande ❌:** ingen fil-I/O eller UI (spara-till-fil / ladda-från-fil-knappar).
+- ⚠️ Serialisering/deserialisering (`src/model/serialization.ts`) är klar och round-trip-testad, snake_case-fältnamn (`conditional_tables`) enligt regeln ovan. Osatt sannolikhet (NaN) och osatt payoff mappas **explicit** till `null` och tillbaka — inte via JSON.stringifys tysta NaN→null. **Fortfarande ❌:** ingen fil-I/O eller UI (spara-till-fil / ladda-från-fil-knappar).
 - Path-keyed datastrukturer för delade Outcome-objekt över flera paths: **inte en risk idag** (trädet är strikt ett träd, ingen delning), men bli explicit designkrav om delning införs senare.
 
 ## Undo/redo

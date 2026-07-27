@@ -4,6 +4,34 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-07-27 (segment 5) — Refaktor till läroboksmodellen + legacy's interaktions-UX
+
+**Bakgrund:** Flip/split-segmentet pausades vid en genuin matematisk oklarhet i Bayes-omvändnings-spec:en (dokumenterad i föregående konversation — de tre öppna frågorna om scope/semantik/konstruktion är **fortfarande obesvarade** och flip är fortsatt pausad). Istället analyserades legacy-UI:t på djupet på Vincents begäran (menystruktur, dialoger, interaktionsflöden), vilket ledde till tre bekräftade beslut:
+
+1. **Modellen refaktoreras till legacy/läroboks-semantiken:** två nodtyper (`decision`/`chance`), utfallen är kanterna, terminala utfall (utan barn) bär payoff — lövnodtypen är borttagen.
+2. **Villkorstabeller lagras per nod** (villkor → komplett fördelning över nodens utfall), inte per kant — radsumma-1 blir strukturellt naturlig.
+3. **UI:t följer legacy's interaktionsmodell:** kompakt kontextmeny per nod + fokuserade dialoger, istället för allt-i-ett-sidopanelen.
+
+**Vad byggdes:**
+
+- **Modell:** `tree.ts` omskriven (NodeType `decision`/`chance`, `Outcome.value` för terminala utfall, `addOutcome`/`setChild`/`detachChild`/`removeOutcome`/`renameOutcome`). `renameOutcome` skriver om både nodens egna villkorsradsnycklar och alla villkorstokens i trädet. `conditionalProbability.ts` matchar nu hela rader (mest specifika vinner, tie → fel; utfall utanför raden faller tillbaka på bas). `expectedValue`, `validateProbabilities`, `backwardFill` (mål = terminalt utfall), `serialization` (NaN/undefined ↔ null explicit — den tidigare NaN-varningen är därmed löst by design) — alla anpassade.
+- **Rendering:** terminala utfall ritas som triangel + payoff + joint path-sannolikhet (NaN-propagerande). Rektangel = beslut, ellips = slump.
+- **UI:** kontextmeny (Byt namn / Redigera utfall / Växla typ / Villkorstabell / Ta bort nod), utfallsredigerare med explicit Normalisera-knapp (aldrig tyst), villkorsmatris (rader = villkor från förfädernas utfall via dropdown, kolumner = nodens utfall, "(bas)"-rad), terminaldialog (payoff + backward-fill-mål + Lägg till barnnod), meddelanderad för backward-fill-rapporter och fel.
+- **Tester:** alla 10 testfiler omskrivna för nya semantiken — 71 tester, alla gröna. `tsc` rent, `npm run build` rent. Fullt flöde browser-verifierat (skapa rot via dialog → utfall via matrisdialog → payoffs via terminaldialog → EV 4.4 → backward-fill 0.3→0.6 med transparent rapport → EV 6.8 → beslutsnod fäst efter ett utfall, asymmetriskt träd) utan konsolfel.
+
+**Judgment calls:**
+
+1. **"Ta bort nod" bevarar det ingående utfallet** som terminal slutpunkt (payoff osatt) istället för att ta bort hela utfallet — legacy tog bort noden ur sekvensen; i ett äkta träd är detta närmaste motsvarighet och minst destruktivt. Att ta bort själva utfallet görs i utfallsredigeraren (✕, med delträdsvarning).
+2. **Villkorsdialogens radsummor blockerar inte spara** — Σ-varningen visas live i dialogen och på noden i trädet; hårda fel reserveras för strukturella problem (dubbletter, tomma etiketter). Följer varna-inte-blockera-mönstret.
+3. **Villkorsrader med tomma celler** sparar bara de ifyllda kolumnerna (övriga utfall faller tillbaka på bas vid upplösning).
+4. **Villkorsval i dialogen är en-token-per-rad** (dropdown över förfädernas utfall, som legacy). Modellen stödjer multi-token-villkor (subset-matchning finns kvar), men UI:t exponerar det inte än.
+5. **"Lägg till nod"-knappen** skapar bara rot (dialog med typval); med befintligt träd visas ett hint-meddelande — trädet växer via terminaldialogens "Lägg till barnnod".
+6. **Terminaldialogen applicerar bara ändrade fält** (som legacy's LeafValueDialog) — tömt värdefält = payoff osätts.
+
+**Kvarstår (❌):** Flip/split med Bayes (pausad — de tre matematikfrågorna måste besvaras först), VOC, beräkningssteg-visning, save/load-UI, undo/redo, PNG-export.
+
+---
+
 ## 2026-07-27 (segment 4) — Interaktivt UI: SVG-rendering, redigering, backward-fill, live EV
 
 **Vad hände:** Claude Code byggde hela UI-segmentet på `rebuild-typescript` enligt de tre låsta besluten från legacy-genomgången.
