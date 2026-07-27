@@ -21,6 +21,11 @@ export interface SerializedTreeNode {
   id: string
   node_type: NodeType
   label: string
+  /** Persisted so variable grouping — and explicit unlinks — survive a
+   * round-trip. Optional for backward compatibility: an older file without
+   * these deserializes to a singleton (variable_id defaults to id). */
+  variable_id?: string
+  instance_index?: number
   conditional_tables: SerializedConditionalRow[]
   outcomes: SerializedOutcome[]
 }
@@ -30,6 +35,8 @@ export function serializeTree(node: TreeNode): SerializedTreeNode {
     id: node.id,
     node_type: node.nodeType,
     label: node.label,
+    variable_id: node.variableId,
+    instance_index: node.instanceIndex,
     conditional_tables: node.conditionalTable.map((row) => ({
       condition: [...row.condition].sort(),
       probabilities: { ...row.probabilities },
@@ -48,6 +55,8 @@ export function serializeTree(node: TreeNode): SerializedTreeNode {
  * rows, and structure. */
 export function deserializeTree(data: SerializedTreeNode): TreeNode {
   const node = new TreeNode(data.id, data.node_type, data.label)
+  node.variableId = data.variable_id ?? data.id
+  node.instanceIndex = data.instance_index ?? 0
   node.conditionalTable = data.conditional_tables.map((row) => ({
     condition: new Set(row.condition),
     probabilities: { ...row.probabilities },
