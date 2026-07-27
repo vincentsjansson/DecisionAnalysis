@@ -14,8 +14,8 @@ Kursen (Grunderna för beslutsfattande och beslutsanalys, vecka 2–10) har ett 
 
 1. ✅ Modellrefaktor (två nodtyper `decision`/`chance`, payoff på terminala outcomes, villkorstabeller per nod) — klar.
 2. ✅ VOC (flip/split med Bayes-omvändning för klassisk klarsyn) — klar.
-3. ❌ EU (Expected Utility) — u-funktion som parametriserad familj (linjär/kvadratisk/exponentiell/logaritmisk + riskaversionsparameter, bekräftat 2026-07-27), EV räknas om på nyttovärden, transformeras tillbaka till säkerhetsekvivalent (CE) för visning. **Nästa segment.**
-4. ❌ Pedagogiska tillägg (billiga, hög vinst): sannolikhetsvalidering som synlig UI-varning (modellogiken finns redan i `validateProbabilities`), steg-för-steg-beräkningsvisning.
+3. ✅ EU (Expected Utility) — u-funktion i två former (linjär + exponentiell CARA med parameter γ, reviderat 2026-07-27 efter kursmaterialet), EV räknas om på nyttovärden och transformeras tillbaka till säkerhetsekvivalent (CE) för visning. γ sätts via elicitering (indifferens-fråga eller referensbelopp), inte råinmatning. Klar.
+4. ❌ Pedagogiska tillägg (billiga, hög vinst): sannolikhetsvalidering som synlig UI-varning (modellogiken finns redan i `validateProbabilities`), steg-för-steg-beräkningsvisning. **Sista MVP-steget.**
 
 **Explicit uteslutet ur MVP (senare, egna segment):** VOI för imperfekt information (kräver Bayesiansk uppdatering, likelihood, sensitivitet/specificitet — bygger vidare på VOC-ramverket), känslighetsanalys, flerdimensionella värdefunktioner, relevansdiagram, risk & förmåga-modul, beslutsanalyscykel-vy, real optioner, undo/redo, PNG-export, save/load-UI.
 
@@ -97,10 +97,11 @@ Dessa är redan förhindrade av TS-modellens grundarkitektur (ett villkorsformat
 
 ## Expected Utility (EU)
 
-- ❌ EU-beräkning (väntad nytta) som alternativ till EV. Del av MVP.
-- **U-funktion (bekräftad 2026-07-27):** parametriserad familj — användaren väljer typ (linjär/kvadratisk/exponentiell/logaritmisk) + en riskaversionsparameter. Matchar kursens standardexempel (Kim/Jane) och går att räkna CE på analytiskt (inverterbar funktion).
-- Terminala outcomes payoff-värden transformeras genom u-funktionen → EU räknas som EV men på nyttovärdena (samma decision=max/chance=weighted-average-rekursion som befintlig EV) → resultat transformeras tillbaka till säkerhetsekvivalent (CE) i pengar via den inversa u-funktionen för visning.
-- UI: användaren ska kunna välja u-funktionstyp och riskaversionsparameter, och växla vyn mellan EV-läge och EU/CE-läge.
+- ✅ EU-beräkning (väntad nytta) som alternativ till EV (`src/model/expectedUtility.ts`, `src/model/utility.ts`).
+- **U-funktion (reviderat 2026-07-27 efter kursmaterialet):** endast **två** former — linjär (riskneutral, u(x)=x, CE=EV) och exponentiell CARA u(x)=(1−e^(−γx))/γ. Parametern heter **γ**; kursens "riskodds" r relaterar via γ = ln(r) (γ>0 riskavert, γ=0 neutral, γ<0 risksökande). Kvadratisk/logaritmisk från den tidigare fyra-typs-versionen är borttagna (utanför kursmaterialet). Båda har sluten invers för CE.
+- Terminala outcomes payoff-värden transformeras genom u-funktionen → EU räknas som EV men på nyttovärdena (samma decision=max/chance=weighted-average-rekursion) → CE = u⁻¹(EU) i pengar för visning. Osatt payoff → NaN → "–". Ogiltig invers (utility utanför räckvidd) kastar `UtilityDomainError` och visas som banner + "CE –", ingen krasch.
+- **γ-elicitering (kursens metoder, `src/model/utility.ts`):** (1) indifferens-fråga — användaren anger p där hen är indifferent mellan 0 säkert och (p: vinn 1 / 1−p: förlora 1) → γ = ln(p/(1−p)) exakt; p=0.5 → γ=0. (2) snabb approximation — referensbelopp W → γ ≈ 0.96/W. UI:t visar resulterande γ, riskodds r, och exempel-CE:n; γ kan finjusteras manuellt efteråt.
+- UI: lägesknapp EV ↔ EU/CE i toppmenyn; i EU-läge visar noder CE (pengar, aldrig råa nyttotal). Utility-bar med typval + γ-input + elicitering-dialog. Gäller även split-läge: VOC beräknas då på CE (CE_omvänt − CE_original), samma ≥0-egenskap som EV-läges-VOC.
 
 ## Explicit ur scope tills vidare
 

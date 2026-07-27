@@ -4,6 +4,29 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-07-27 (segment 7) — Expected Utility (EU/CE) med γ-elicitering
+
+**Vad hände:** Byggde EU som alternativt beräkningsläge vid sidan av EV. Ursprungspromptens fyra u-funktionstyper reviderades mitt i segmentet till kursmaterialets två (linjär + exponentiell CARA), med γ-elicitering som den pedagogiskt centrala biten.
+
+- **`src/model/utility.ts`:** linjär (identitet) + exponentiell CARA u(x)=(1−e^(−γx))/γ, båda med sluten, algebraiskt verifierad invers. Domänvaktat (`UtilityDomainError` vid utility utanför inverterbar räckvidd); NaN (osatt payoff) propagerar. γ-elicitering: `gammaFromIndifference(p)=ln(p/(1−p))` (exakt lösning av CARA-indifferensen u(0)=p·u(1)+(1−p)·u(−1)), `gammaFromReferenceAmount(W)=0.96/W`, `riskOddsFromGamma=e^γ`.
+- **`src/model/expectedUtility.ts`:** `calculateEU` (samma decision=max/chance=viktat-medel-rekursion som EV, men på nyttovärden), `certaintyEquivalent` = u⁻¹(EU).
+- **UI:** lägesknapp EV↔EU/CE; i EU-läge visar noder CE (pengar, aldrig råa nyttotal). Utility-bar (typval Linjär/Exponentiell, γ-finjustering, riskodds-utläsning). Elicitering-dialog med båda metoderna, live γ/r-utläsning och exempel-CE:n. Split-läge räknar VOC på CE i EU-läge. Utility-fel visas som banner + "CE –", ingen krasch.
+- **Tester:** 30 nya (utility + EU + UI). Totalt 117, alla gröna. `tsc` rent, build rent. Browser-verifierat: EV 5 → CE 3.799 (γ=0.1), elicitering p=0.6 → γ=0.4055/r=1.5, W=48 → γ=0.02, split-CE-VOC, graceful "CE –" vid γ utanför räckvidd. Inga konsolfel.
+
+**Judgment calls:**
+
+1. **Fyra typer → två.** Tog bort kvadratisk och logaritmisk helt (kod + tester) istället för att lämna dem oanvända — matchar projektets "ingen död kod"-disciplin och SPEC:ens två-typs-scope. Linjär + exponentiell räcker för kursen.
+2. **Parametern heter `parameter` i interfacet men *är* γ för exponentiell** — ett fält, minimal UI. Kursens "riskodds" r (=e^γ) visas i UI:t men lagras aldrig; bara γ lever i modellen.
+3. **Default vid EU-läge = exponentiell γ=0.1** (synligt riskavert), inte linjär — så att växlingen till EU faktiskt visar CE<EV istället för en no-op. Användaren kan välja Linjär explicit.
+4. **Typbyte återställer γ till typens default**; finjustering sker efteråt.
+5. **Split-läges-EU byggdes (inte uppskjutet):** VOC på CE var en ren utökning (CE på båda träden). CE_omvänt ≥ CE_original håller eftersom u⁻¹ är växande, så ≥0-egenskapen består. Ren chansträd (utan beslut) ger korrekt VOC=0.
+6. **Elicitering-preview** visar exempel-CE:n för 50/50-chansningar (100 resp. 10) snarare än en ritad u-kurva — textbaserat är robustare och räcker för intuition.
+7. **γ=0 hanteras som riskneutrala gränsvärdet** (identitet) i både applyUtility och inversen, så p=0.5-elicitering blir ren riskneutralitet utan division-med-noll.
+
+**MVP-status:** Efter detta segment återstår endast punkt 4 i MVP-prioriteringen — pedagogiska tillägg (sannolikhetsvaliderings-UI-varning finns redan i renderingen som Σ-varning; kvar är steg-för-steg-beräkningsvisning). Sedan är MVP (trädvisualisering, EV, EU, VOC) komplett.
+
+---
+
 ## 2026-07-27 (segment 6) — Flip/split med korrekt klarsyns-matematik + VOC
 
 **Bakgrund:** De tre tidigare öppna flip-frågorna låstes av Vincent: (1) scope = alla paths möter samma variabelsekvens, tidig terminering hanteras med läroboks-dupliceringsregeln, allt annat är hårt fel; (2) semantik = klassisk klarsyn (chans före beslut), VOC = EV(omvänt) − EV(original) ≥ 0 med hård invariant; (3) konstruktion = det flippade trädet är ett helt nytt äkta träd med posteriorer som bas-sannolikheter, inga villkorstabeller.
