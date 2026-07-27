@@ -1,0 +1,415 @@
+/* Black-and-white theme throughout — no color carries meaning. */
+:root {
+  --ink: #1a1a1a;
+  --paper: #ffffff;
+  --muted: #666666;
+  --faint: #cccccc;
+  color-scheme: light;
+  font: 14px/1.5 'Segoe UI', system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#app,
+.app {
+  height: 100svh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ── Fixed top bar: outside the SVG, unaffected by zoom/pan ── */
+.topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--ink);
+  background: var(--paper);
+}
+
+.app-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+button.primary {
+  font-weight: 600;
+}
+
+/* ── Message strip: backward-fill reports and errors ── */
+.message-strip {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--ink);
+  padding: 6px 16px;
+  font-size: 12px;
+  background: var(--paper);
+}
+
+/* ── Workspace: one canvas, or two side-by-side in split mode ── */
+.workspace {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+.canvas-host {
+  flex: 1 1 0;
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.right-pane {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-left: 1px solid var(--ink);
+}
+
+.pane-caption {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--muted);
+  border-bottom: 1px solid var(--faint);
+}
+
+.flip-error {
+  padding: 16px;
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* ── Utility config bar (EU mode) ── */
+.utility-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--ink);
+  font-size: 13px;
+  background: var(--paper);
+}
+
+.utility-bar select,
+.utility-bar input {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+
+.utility-param {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.utility-param input {
+  width: 80px;
+}
+
+.risk-readout {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.utility-error {
+  flex: 0 0 auto;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--ink);
+  font-size: 12px;
+  font-style: italic;
+  background: var(--paper);
+}
+
+.elicit-result {
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+
+.elicit-preview {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0;
+}
+
+/* ── Calculation-trace bar: the arithmetic behind the selected node ── */
+.trace-bar {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--ink);
+  padding: 6px 16px;
+  font-size: 13px;
+  background: var(--paper);
+  /* Keep the full expression readable at high branching factors by wrapping
+     rather than truncating — the arithmetic stays complete and honest. */
+  white-space: normal;
+  word-break: break-word;
+}
+
+.trace-line {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 0;
+}
+
+/* ── VOC bar: the pedagogical payoff, shown only in split mode ── */
+.voc-bar {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--ink);
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--paper);
+}
+
+.tree-svg {
+  display: block;
+  cursor: grab;
+}
+
+.empty-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+/* ── SVG tree ── */
+.shape {
+  fill: var(--paper);
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+
+.shape.selected {
+  stroke-width: 3;
+}
+
+.node,
+.leaf {
+  cursor: pointer;
+}
+
+.leaf .shape {
+  fill: var(--ink);
+}
+
+.node-label {
+  fill: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  text-anchor: middle;
+}
+
+.node-ev {
+  fill: var(--muted);
+  font-size: 11px;
+  text-anchor: middle;
+}
+
+.node-warning {
+  fill: var(--ink);
+  font-size: 10px;
+  font-style: italic;
+  text-anchor: middle;
+}
+
+.leaf-value {
+  fill: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.leaf-joint {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.edge {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+
+.edge-label {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+/* ── Context menu ── */
+.menu {
+  position: absolute;
+  z-index: 20;
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 4px;
+}
+
+.menu-item {
+  border: none;
+  border-radius: 4px;
+  text-align: left;
+  padding: 8px 12px;
+  background: var(--paper);
+}
+
+/* ── Dialogs ── */
+.dialog-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dialog {
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 8px;
+  padding: 18px;
+  min-width: 320px;
+  max-width: 90%;
+  max-height: 85%;
+  overflow-y: auto;
+}
+
+.dialog h2 {
+  font-size: 15px;
+  margin: 0 0 12px;
+}
+
+.dialog-body .field {
+  display: block;
+  margin-bottom: 10px;
+}
+
+.field > span {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.dialog input,
+.dialog select {
+  width: 100%;
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.dialog-row {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.dialog-row input:first-child {
+  flex: 1 1 auto;
+}
+
+.dialog input.prob {
+  flex: 0 0 70px;
+  width: 70px;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.dialog-actions select {
+  width: auto;
+  flex: 1 1 auto;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.dialog-warning {
+  font-size: 12px;
+  font-style: italic;
+  margin: 6px 0 0;
+}
+
+.matrix {
+  border-collapse: collapse;
+}
+
+.matrix th,
+.matrix td {
+  padding: 3px 4px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.matrix th {
+  color: var(--muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--faint);
+}
+
+.matrix td.base {
+  font-style: italic;
+  color: var(--muted);
+}
+
+.matrix input.prob {
+  width: 70px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+}

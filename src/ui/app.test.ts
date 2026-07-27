@@ -1,0 +1,420 @@
+// @vitest-environment jsdom
+import { describe, expect, it } from 'vitest'
+import { createApp } from './app'
+
+function newApp(confirmAnswer = true) {
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  return { app: createApp(container, { confirmFn: () => confirmAnswer }), container }
+}
+
+describe('createApp', () => {
+  it('builds the shell: top bar, add button, canvas, menu/dialog layers', () => {
+    const { container } = newApp()
+    expect(container.querySelector('.topbar')).not.toBeNull()
+    expect(container.querySelector('#add-node')).not.toBeNull()
+    expect(container.querySelector('.canvas-host')).not.toBeNull()
+    expect(container.querySelector('.menu-layer')).not.toBeNull()
+    expect(container.querySelector('.dialog-layer')).not.toBeNull()
+    expect(container.querySelector('.empty-hint')).not.toBeNull()
+  })
+
+  it('creates a root and adds outcomes with unset probability', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Vädret')
+    app.api.addOutcomeTo(root, 'Regn')
+
+    expect(app.state.root).toBe(root)
+    expect(root.outcomes).toHaveLength(1)
+    expect(Number.isNaN(root.outcomes[0].probability)).toBe(true)
+    expect(container.querySelectorAll('g.leaf')).toHaveLength(1)
+  })
+
+  it('attaches child nodes through the model layer (cycle-protected setChild)', () => {
+    const { app } = newApp()
+    const root = app.api.createRoot('chance', 'Vädret')
+    const edge = app.api.addOutcomeTo(root, 'Regn', 0.3)
+    const child = app.api.attachChild(root, edge, 'decision', 'Åtgärd')
+
+    expect(edge.child).toBe(child)
+    expect(child.parent).toBe(root)
+    expect(child.nodeType).toBe('decision')
+  })
+
+  it('opens the context menu on node click', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Vädret')
+    app.api.addOutcomeTo(root, 'Regn', 1, 5)
+
+    container
+      .querySelector('[data-node-id]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    const items = [...container.querySelectorAll('.menu-item')].map((b) => b.textContent)
+    expect(items.some((t) => t?.includes('Byt namn'))).toBe(true)
+    expect(items.some((t) => t?.includes('Redigera utfall'))).toBe(true)
+    expect(items.some((t) => t?.includes('beslutsnod'))).toBe(true)
+    expect(items.some((t) => t?.includes('Villkorstabell'))).toBe(true)
+    expect(items.some((t) => t?.includes('Ta bort nod'))).toBe(true)
+  })
+
+  it('opens the terminal dialog on leaf click', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Vädret')
+    app.api.addOutcomeTo(root, 'Regn', 1, 5)
+
+    container.querySelector('g.leaf')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    const dialog = container.querySelector('.dialog')!
+    expect(dialog.textContent).toContain('Värde (payoff)')
+    expect(dialog.textContent).toContain('backward-fill')
+  })
+
+  it('toggle type switches chance <-> decision', () => {
+    const { app } = newApp()
+    const root = app.api.createRoot('chance', 'N')
+    app.api.toggleType(root)
+    expect(root.nodeType).toBe('decision')
+    app.api.toggleType(root)
+    expect(root.nodeType).toBe('chance')
+  })
+
+  it('deleting a child node keeps the outcome as a terminal endpoint', () => {
+    const { app } = newApp()
+    const root = app.api.createRoot('chance', 'Root')
+    const edge = app.api.addOutcomeTo(root, 'A', 0.5)
+    const child = app.api.attachChild(root, edge, 'chance', 'C')
+    app.api.addOutcomeTo(child, 'X', 1, 5)
+
+    app.api.deleteNode(child)
+
+    expect(root.outcomes).toHaveLength(1)
+    expect(edge.child).toBeNull()
+    expect(edge.value).toBeUndefined()
+    expect(child.parent).toBeNull()
+  })
+
+  it('deleting the root empties the tree', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Root')
+    app.api.deleteNode(root)
+    expect(app.state.root).toBeNull()
+    expect(container.querySelector('.empty-hint')).not.toBeNull()
+  })
+
+  it('renaming an outcome rewrites downstream conditional tokens', () => {
+    const { app } = newApp()
+    const root = app.api.createRoot('chance', 'Root')
+    const edgeA = app.api.addOutcomeTo(root, 'A', 0.5)
+    const mid = app.api.attachChild(root, edgeA, 'chance', 'Mid')
+    app.api.addOutcomeTo(mid, 'X', 0.5, 1)
+    app.api.addOutcomeTo(mid, 'Y', 0.5, 0)
+    app.api.setConditionalTable(mid, [
+      { condition: new Set([`${root.id}:A`]), probabilities: { X: 0.9, Y: 0.1 } },
+    ])
+
+    app.api.renameOutcomeOn(root, edgeA, 'Regn')
+
+    expect(edgeA.label).toBe('Regn')
+    expect(mid.conditionalTable[0].condition.has(`${root.id}:Regn`)).toBe(true)
+  })
+
+  it('backward-fill adjusts the model and reports transparently in the strip', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Root')
+    const edgeA = app.api.addOutcomeTo(root, 'A', 0.3)
+    const edgeB = app.api.addOutcomeTo(root, 'B', 0.7, 5)
+    const mid = app.api.attachChild(root, edgeA, 'chance', 'Mid')
+    const edgeX = app.api.addOutcomeTo(mid, 'X', 0.5, 10)
+    app.api.addOutcomeTo(mid, 'Y', 0.5, 0)
+
+    app.api.applyBackwardFill(mid, edgeX, 0.24)
+
+    expect(edgeA.probability).toBeCloseTo(0.48)
+    expect(edgeB.probability).toBeCloseTo(0.52)
+    const strip = container.querySelector('.message-strip') as HTMLElement
+    expect(strip.style.display).not.toBe('none')
+    expect(strip.textContent).toContain('Root → A')
+    expect(strip.textContent).toContain('0.3')
+    expect(strip.textContent).toContain('0.48')
+    expect(strip.textContent).toContain('syskon')
+  })
+
+  it('backward-fill errors surface in the strip without crashing', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Root')
+    const edgeA = app.api.addOutcomeTo(root, 'A', 0.3)
+    app.api.addOutcomeTo(root, 'B', 0.7, 5)
+    const mid = app.api.attachChild(root, edgeA, 'chance', 'Mid')
+    const edgeX = app.api.addOutcomeTo(mid, 'X', 0.5, 10)
+    app.api.addOutcomeTo(mid, 'Y', 0.5, 0)
+
+    // Unreachable: max joint via root alone is 0.5, via mid alone 0.3.
+    expect(() => app.api.applyBackwardFill(mid, edgeX, 0.9)).toThrow()
+    // The UI layer wraps api calls in guarded(); simulate that path too:
+    try {
+      app.api.applyBackwardFill(mid, edgeX, 0.9)
+    } catch (e) {
+      app.state.message = (e as Error).message
+    }
+    expect(app.state.message).toContain('No valid single-outcome adjustment')
+    void container
+  })
+
+  it('split mode: flip renders both trees, edits re-flip live, merge discards', () => {
+    const { app, container } = newApp()
+    // Classic tree: Bet(decision): Yes -> Weather(Rain 0.3 -> 8, Sun 0.7 -> 2), No -> 3.
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    app.api.addOutcomeTo(root, 'No', NaN, 3)
+    const weather = app.api.attachChild(root, yes, 'chance', 'Weather')
+    const rain = app.api.addOutcomeTo(weather, 'Rain', 0.3, 8)
+    const sun = app.api.addOutcomeTo(weather, 'Sun', 0.7, 2)
+
+    const rightPane = container.querySelector('.right-pane') as HTMLElement
+    const vocBar = container.querySelector('.voc-bar') as HTMLElement
+    expect(rightPane.style.display).toBe('none')
+
+    app.api.toggleSplit()
+
+    // Both trees rendered; right is the flipped one (Weather at its root).
+    expect(rightPane.style.display).not.toBe('none')
+    expect(rightPane.textContent).toContain('klarsyn')
+    // flip_1 is the flipped tree's root — the chance variable moved first.
+    expect(
+      container.querySelector('.canvas-right [data-node-id="flip_1"] .node-label')!.textContent,
+    ).toBe('Weather')
+    const rightLabels = [...container.querySelectorAll('.canvas-right .node-label')].map(
+      (n) => n.textContent,
+    )
+    expect(rightLabels).toContain('Bet')
+    // Hand-calculated: EV orig 3.8, EV flipped 4.5, VOC 0.7.
+    expect(vocBar.textContent).toContain('EV original = 3.8')
+    expect(vocBar.textContent).toContain('4.5')
+    expect(vocBar.textContent).toContain('VOC = 0.7')
+
+    // Editing the left tree re-flips the right side live.
+    app.api.setProbability(rain, 0.6)
+    app.api.setProbability(sun, 0.4)
+    // New: EV orig = max(0.6·8+0.4·2, 3) = 5.6; flipped = 0.6·8+0.4·3 = 6; VOC 0.4.
+    expect(vocBar.textContent).toContain('VOC = 0.4')
+
+    // The right tree is read-only: clicking its nodes opens no menu.
+    container
+      .querySelector('.canvas-right [data-node-id]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(container.querySelector('.menu')).toBeNull()
+
+    // Merge back: right pane and VOC bar hidden, left tree intact.
+    app.api.toggleSplit()
+    expect(rightPane.style.display).toBe('none')
+    expect(vocBar.style.display).toBe('none')
+    expect(app.state.root).toBe(root)
+    expect(container.querySelector('.canvas-right svg')).toBeNull()
+  })
+
+  it('split mode shows the specific flip error for an unflippable tree', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    const no = app.api.addOutcomeTo(root, 'No')
+    const weather = app.api.attachChild(root, yes, 'chance', 'Weather')
+    app.api.addOutcomeTo(weather, 'Rain', 0.5, 1)
+    app.api.addOutcomeTo(weather, 'Sun', 0.5, 2)
+    const market = app.api.attachChild(root, no, 'chance', 'Market')
+    app.api.addOutcomeTo(market, 'Up', 0.5, 3)
+    app.api.addOutcomeTo(market, 'Down', 0.5, 4)
+
+    app.api.toggleSplit()
+
+    const error = container.querySelector('.flip-error') as HTMLElement
+    expect(error.style.display).not.toBe('none')
+    expect(error.textContent).toContain('Weather')
+    expect(error.textContent).toContain('Market')
+    expect((container.querySelector('.voc-bar') as HTMLElement).textContent).toBe('VOC = –')
+  })
+
+  it('EU mode: toggle switches node labels from EV to CE and shows the utility bar', () => {
+    const { app, container } = newApp()
+    // Coin flip 0.5 -> 10, 0.5 -> 0. EV = 5.
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'Heads', 0.5, 10)
+    app.api.addOutcomeTo(root, 'Tails', 0.5, 0)
+
+    const evLabel = container.querySelector('[data-node-id="n1"] .node-ev')!
+    expect(evLabel.textContent).toBe('EV 5')
+    expect((container.querySelector('.utility-bar') as HTMLElement).style.display).toBe('none')
+
+    app.api.setDisplayMode('eu')
+
+    // Default EU utility is exponential γ=0.1 -> CE = 3.799 < EV 5 (risk-averse).
+    expect((container.querySelector('.utility-bar') as HTMLElement).style.display).not.toBe('none')
+    const ceLabel = container.querySelector('[data-node-id="n1"] .node-ev')!
+    expect(ceLabel.textContent).toMatch(/^CE 3\.799/)
+    expect((container.querySelector('#mode-toggle') as HTMLElement).textContent).toContain('EU/CE')
+  })
+
+  it('EU mode: linear utility makes CE equal EV again', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'Heads', 0.5, 10)
+    app.api.addOutcomeTo(root, 'Tails', 0.5, 0)
+
+    app.api.setDisplayMode('eu')
+    app.api.setUtilityType('linear')
+    expect(container.querySelector('[data-node-id="n1"] .node-ev')!.textContent).toBe('CE 5')
+    // Linear has no parameter -> γ input hidden.
+    expect((container.querySelector('.utility-param') as HTMLElement).style.display).toBe('none')
+  })
+
+  it('EU mode: changing γ updates the displayed CE live', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'Heads', 0.5, 10)
+    app.api.addOutcomeTo(root, 'Tails', 0.5, 0)
+
+    app.api.setDisplayMode('eu')
+    app.api.setUtilityParameter(-0.1) // risk-seeking -> CE > EV
+    const ce = parseFloat(
+      container.querySelector('[data-node-id="n1"] .node-ev')!.textContent!.replace('CE ', ''),
+    )
+    expect(ce).toBeGreaterThan(5)
+  })
+
+  it('EU mode: elicited γ from p is applied (γ = ln(p/(1−p)))', () => {
+    const { app } = newApp()
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'Heads', 0.5, 10)
+    app.api.addOutcomeTo(root, 'Tails', 0.5, 0)
+    app.api.setDisplayMode('eu')
+
+    // Simulate what the elicitation dialog computes and applies for p = 0.6.
+    app.api.setUtilityParameter(Math.log(0.6 / 0.4))
+    expect(app.state.utilityFn.parameter).toBeCloseTo(0.405465)
+  })
+
+  it('EU mode: split VOC is computed on certainty equivalents', () => {
+    const { app, container } = newApp()
+    // Classic Bet tree; flip gives clairvoyance value.
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    app.api.addOutcomeTo(root, 'No', NaN, 3)
+    const weather = app.api.attachChild(root, yes, 'chance', 'Weather')
+    app.api.addOutcomeTo(weather, 'Rain', 0.3, 8)
+    app.api.addOutcomeTo(weather, 'Sun', 0.7, 2)
+
+    app.api.setDisplayMode('eu')
+    app.api.toggleSplit()
+
+    const voc = container.querySelector('.voc-bar')!.textContent!
+    expect(voc).toContain('CE original')
+    expect(voc).toContain('VOC (CE)')
+  })
+
+  it('EU mode: utility errors do not crash render (graceful)', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'Big', 1, 1000)
+    app.api.setDisplayMode('eu')
+    // γ large enough that u(1000) pushes EU past the invertible 1/γ boundary.
+    app.api.setUtilityParameter(1)
+    // Render still produced a tree; the node shows "CE –" rather than crashing.
+    expect(container.querySelector('[data-node-id="n1"]')).not.toBeNull()
+    expect(container.querySelector('[data-node-id="n1"] .node-ev')!.textContent).toBe('CE –')
+  })
+
+  it('shows the calculation trace for a selected node, live and mode-aware', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Väder')
+    const rain = app.api.addOutcomeTo(root, 'Regn', 0.3, 8)
+    app.api.addOutcomeTo(root, 'Sol', 0.7, 2)
+
+    const traceBar = container.querySelector('.trace-bar') as HTMLElement
+    // createRoot auto-selects the root, so the trace is already visible.
+    app.api.selectNode(root)
+    expect(traceBar.style.display).not.toBe('none')
+    expect(traceBar.textContent).toBe('Beräkning (Väder): 0.3 × 8 + 0.7 × 2 = 3.8')
+
+    // Live update: change a payoff, trace text follows.
+    app.api.setValue(rain, 18)
+    expect(traceBar.textContent).toBe('Beräkning (Väder): 0.3 × 18 + 0.7 × 2 = 6.8')
+
+    // EU mode: trace switches to the utility/CE form.
+    app.api.setValue(rain, 8)
+    app.api.setDisplayMode('eu')
+    expect(traceBar.textContent).toContain('EU =')
+    expect(traceBar.textContent).toContain('→ CE =')
+
+    // Deselect hides it.
+    app.api.selectNode(null)
+    expect(traceBar.style.display).toBe('none')
+  })
+
+  it('trace shows the incomplete message when data is missing', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'A', NaN, 8) // probability unset
+    app.api.addOutcomeTo(root, 'B', NaN, 2)
+    app.api.selectNode(root)
+    expect((container.querySelector('.trace-bar') as HTMLElement).textContent).toContain(
+      'Ofullständig data',
+    )
+  })
+
+  it('terminal dialog shows the utility transform in EU mode only', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'A', 1, 10)
+
+    // EV mode: no utility line.
+    container.querySelector('g.leaf')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(container.querySelector('.dialog')!.textContent).not.toContain('Nyttotransform')
+    container.querySelector('.dialog-overlay')!.dispatchEvent(
+      new MouseEvent('click', { bubbles: true }),
+    )
+
+    // EU mode: u(10) shown.
+    app.api.setDisplayMode('eu')
+    container.querySelector('g.leaf')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(container.querySelector('.dialog')!.textContent).toContain('u(10) = 6.321')
+  })
+
+  it('Σ-warning uses resolved conditional probabilities and shows in both modes', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Root')
+    const a = app.api.addOutcomeTo(root, 'A', 1)
+    const mid = app.api.attachChild(root, a, 'chance', 'Mid')
+    app.api.addOutcomeTo(mid, 'X', 0.5, 8)
+    app.api.addOutcomeTo(mid, 'Y', 0.5, 2)
+    // Base probs sum to 1, but a matching conditional row sums to 1.2 — the
+    // warning must reflect the resolved (conditional) probabilities.
+    app.api.setConditionalTable(mid, [
+      { condition: new Set([`${root.id}:A`]), probabilities: { X: 0.9, Y: 0.3 } },
+    ])
+
+    const midWarning = () =>
+      container.querySelector('[data-node-id="' + mid.id + '"] .node-warning')?.textContent ?? null
+    expect(midWarning()).toBe('Σ = 1.2 ⚠')
+
+    // Still shown in EU mode (rendering is mode-independent for warnings).
+    app.api.setDisplayMode('eu')
+    expect(midWarning()).toBe('Σ = 1.2 ⚠')
+  })
+
+  it('"Lägg till nod" opens the create-root dialog only for an empty tree', () => {
+    const { app, container } = newApp()
+    const btn = container.querySelector('#add-node') as HTMLButtonElement
+    btn.click()
+    expect(container.querySelector('.dialog')).not.toBeNull()
+    expect(container.querySelector('.dialog')!.textContent).toContain('Skapa rotnod')
+
+    // Close, create a root, click again -> hint message instead of dialog.
+    container.querySelector('.dialog-overlay')!.dispatchEvent(
+      new MouseEvent('click', { bubbles: true }),
+    )
+    app.api.createRoot('chance', 'Root')
+    btn.click()
+    expect(container.querySelector('.dialog')).toBeNull()
+    expect(app.state.message).toContain('redan en rot')
+  })
+})
