@@ -1,12 +1,6 @@
 import type { Outcome, TreeNode } from './tree'
+import { branchLabel } from './tree'
 import { resolveProbability } from './conditionalProbability'
-
-/** The label recorded in a history set for having taken `edge` out of `node`.
- * Namespaced by node id so identical edge labels on different nodes
- * (e.g. two "Yes" branches) don't collide in the history set. */
-function branchLabel(node: TreeNode, edgeLabel: string): string {
-  return `${node.id}:${edgeLabel}`
-}
 
 /** Recursively computes the expected value of `node`, given the path taken
  * to reach it (`historySet`). Works at every node, not just leaves:
