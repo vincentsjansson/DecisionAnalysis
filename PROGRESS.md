@@ -4,6 +4,33 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-07-27 (segment 4) — Interaktivt UI: SVG-rendering, redigering, backward-fill, live EV
+
+**Vad hände:** Claude Code byggde hela UI-segmentet på `rebuild-typescript` enligt de tre låsta besluten från legacy-genomgången.
+
+- **Modellutökningar** (`src/model/`): `backwardFill.ts` (ren funktion, justerar första justerbara noden längs pathen, omskalar syskon proportionellt, returnerar full ändringsrapport, kastar `BackwardFillError` vid onåbart mål), `removeChild` (delträdsborttagning), `renameEdgeLabel` (skriver om alla villkorstokens i trädet vid namnbyte — den medvetna fixen för legacys tysta rename-brott). `branchLabel` flyttad till `tree.ts` som enda källa för tokenformatet `nodId:label`.
+- **Rendering** (`src/render/`): `layout.ts` (ren geometri: lövslots med auto-expanderande höjd, föräldrar centrerade på barn, kantetiketter vid t=0.75 längs bezier-kurvan där syskonkurvor divergerat — testat separerade vid 3–4 utfall), `renderTree.ts` (idempotent SVG-ombyggnad, form per nodtyp: rektangel/ellips/triangel, live EV + upplöst sannolikhet, "–" för allt ofullständigt, icke-blockerande Σ-varningar).
+- **UI-skal** (`src/ui/app.ts`): fast toppmeny (HTML utanför SVG — zoom/pan påverkar bara canvas-viewporten), redigeringspanel (skapa rot, lägg till gren, etikett/payoff/sannolikhet/villkorstabell, ta bort med bekräftelse), backward-fill med transparent rapport i panelen: "Justerade P(Vädret → Regn): 0.3 → 0.6 · syskon omskalade: Sol: 0.7 → 0.4".
+- **Tester:** 33 nya (12 modell + 21 UI via jsdom). Totalt 62, alla gröna. `tsc --noEmit` rent, `npm run build` rent.
+- **Verifierat i riktig webbläsare** (inte bara jsdom): skapa träd via UI-formulären, sätta sannolikheter, live EV uppdaterades korrekt (handräknat 4.4 → 6.8 efter backward-fill), ofullständig-markörer visades, felmeddelande vid ogiltigt mål utan krasch.
+
+**Judgment calls (granska och korrigera vid behov):**
+
+1. **"Osatt" sannolikhet = NaN.** Modellen (segment 3) har inget "unset"-tillstånd och default 0 vore ett fabricerat värde. Nya kanter skapas därför med `NaN`, som visas som "–" och ger "p ofullständig"-markör. Varning: `JSON.stringify(NaN)` → `null` — save/load-segmentet måste hantera detta explicit.
+2. **"Lägg till nod" med befintligt träd** väljer roten och öppnar dess panel (där "Lägg till gren" finns) istället för att vara död eller skapa en andra rot.
+3. **Redigeringspanel istället för popup-dialoger:** inline-redigering sker i en fast sidopanel (HTML, alltid synlig för vald nod) — enklare, temakonsekvent, och zoom-oberoende.
+4. **En etikett vid grenskapande:** formuläret tar gren-etiketten (utfallets namn); den nya nodens etikett sätts till samma värde och kan ändras separat efteråt. Två fält vore mer korrekt men klumpigare.
+5. **Syskon-etiketter måste vara unika** (både vid skapande och namnbyte) — annars kolliderar history-tokens `nodId:label` och villkorsupplösningen blir tvetydig.
+6. **Backward-fill justerar aldrig en kant som styrs av en matchande villkorstabellspost** — att ändra dess bassannolikhet vore en tyst no-op (exakt legacy-felläget). Konservativ regel, dokumenterad i funktionens JSDoc.
+7. **Löv skapade via UI kräver payoff direkt** i formuläret (modellens konstruktor kräver det) — ingen tyst default.
+8. **Svensk UI-text** (verktyget är läromedel för en svensk kurs).
+9. **Redigeringar committas på `change`-händelsen** (fokus lämnar fältet/Enter), inte per tangenttryck — hela trädet ritas om per commit och panelen byggs om.
+10. **`confirm()` är injicerbar** i `createApp` så delete-flödet kan testas headless.
+
+**Kvarstår (❌):** VOC, beräkningssteg-visning, flip/split med Bayes-omvändning (eget segment, låst beslut #2), save/load-UI (fil-I/O + NaN-hantering, se judgment call 1), undo/redo, PNG-export.
+
+---
+
 ## 2026-07-27 — Legacy-genomgång (den riktiga koden) + tre låsta arkitekturbeslut
 
 **Vad hände:** Vincent pekade ut en lokal mapp (`C:\Users\vince\Desktop\prog\git test\Beslutsanalys`) som visade sig innehålla en betydligt mer komplett version av det gamla projektet än vad GitHub hade — en fungerande FastAPI-backend (`main.py`, `/ev`, `/backward`), riktig EV- och backward-fill-logik, och en nästan komplett WPF-app (canvas-rendering, dialoger, save/load). Denna ersatte den tunnare GitHub-baserade `legacy/`-arkiveringen (se separat commit).

@@ -46,9 +46,10 @@ Dessa är redan förhindrade av TS-modellens grundarkitektur (ett villkorsformat
 ## Beräkningar
 
 - ✅ EV per nod: slumpnoder = viktat medelvärde av barnens EV; beslutsnoder = max av barnens EV. Rekursiv, fungerar på varje nod i trädet, inte bara löven (`src/model/expectedValue.ts`).
+- ✅ Backward-fill: `src/model/backwardFill.ts` — justerar första justerbara noden längs pathen (slumpnod, >1 utfall, ej styrd av matchande villkorstabell), löser ut kantsannolikheten mot mål-joint-sannolikheten, omskalar syskon proportionellt. Returnerar full rapport (nod, kant, gammal/ny, syskonjusteringar) som UI:t visar — aldrig tyst (låst beslut #3). Kastar `BackwardFillError` vid onåbart mål.
 - ❌ VOC (Value of Clairvoyance).
 - ❌ Beräkningssteg-visning (pedagogisk, t.ex. "0.3 × 8 + 0.7 × 2 = 4.2").
-- ✅ Sannolikhetsvalidering: `src/model/validateProbabilities.ts` kastar `ProbabilitySumError` (med nod-id och faktisk summa) om villkorade sannolikheter för en nod inte summerar till 1 inom tolerans 1e-6 — normaliserar inte tyst.
+- ✅ Sannolikhetsvalidering: `src/model/validateProbabilities.ts` kastar `ProbabilitySumError` (med nod-id och faktisk summa) om villkorade sannolikheter för en nod inte summerar till 1 inom tolerans 1e-6 — normaliserar inte tyst. UI:t visar varningen icke-blockerande på noden ("Σ = 0.6 ⚠"), och skiljer på *fel* summa och *ofullständig* data ("p ofullständig" när sannolikheter är osatta).
 
 ## Flip / split
 
@@ -57,12 +58,14 @@ Dessa är redan förhindrade av TS-modellens grundarkitektur (ett villkorsformat
 
 ## Rendering / UI
 
-- ❌ Canvas- eller SVG-rendering av trädet, idempotent redraw.
-- ❌ Bézier-kurvor för grenar.
-- ❌ Zoom begränsad till canvas-ytan (header fixerad).
-- ❌ Leaf-spacing auto-expand mot overlap.
-- ❌ Svart-vitt tema.
-- ❌ Mirrored layout för höger träd i split-läge (textorientering + pill-sequence-bar speglad).
+- ✅ SVG-rendering av trädet (`src/render/`), fullt idempotent redraw (rensa + bygg om, inga ackumulerande lyssnare). Nodtyper åtskiljs med form, inte färg: rektangel = beslut, ellips = slump, triangel = löv.
+- ✅ Bézier-kurvor för grenar, etiketter med upplöst sannolikhet (via segment-3-resolvern). Etiketter placeras vid t=0.75 längs kurvan där syskonkurvor divergerat — ingen blind mittpunktsplacering, verifierat separerade vid 3–4 utfall per nod (legacy-buggen).
+- ✅ Zoom/pan begränsad till canvas-ytan (transform på SVG-viewporten; toppmenyn är vanlig HTML utanför). Dubbelklick återställer zoom.
+- ✅ Leaf-spacing auto-expand mot overlap, omräknas varje redraw.
+- ✅ Svart-vitt tema rakt igenom (inklusive alla paneler/formulär — inga färgbärande avvikelser).
+- ✅ Interaktiv redigering: skapa rot (typval), lägg till gren på vald nod (äkta asymmetriska träd — låst beslut #1), inline-redigering av etikett/payoff/sannolikhet/villkorstabell, ta bort delträd med bekräftelse. Alla mutationer går via segment-3-modellens validerade funktioner (`setChild` med cykel-skydd, `removeChild`, `renameEdgeLabel` som skriver om villkorstokens vid namnbyte).
+- ✅ Live EV per nod och upplöst sannolikhet per kant — uppdateras direkt vid varje ändring, ingen "beräkna"-knapp. Ofullständig data (osatt sannolikhet, barnlös icke-lövnod) visas som "–", aldrig fabricerade värden. Nya kanter skapas med **osatt** (NaN) sannolikhet, inte 0.
+- ❌ Mirrored layout för höger träd i split-läge (hör till flip/split-segmentet).
 
 ## Spara / ladda
 
