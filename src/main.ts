@@ -1,8 +1,4 @@
 import './style.css'
+import { createApp } from './ui/app'
 
-document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
-  <main>
-    <h1>DecisionAnalysis</h1>
-    <p>Under construction.</p>
-  </main>
-`
+createApp(document.querySelector<HTMLDivElement>('#app')!)

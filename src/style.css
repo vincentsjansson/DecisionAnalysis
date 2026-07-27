@@ -1,18 +1,217 @@
+/* Black-and-white theme throughout — no color carries meaning. */
 :root {
-  color-scheme: light dark;
-  font: 18px/1.5 system-ui, sans-serif;
+  --ink: #1a1a1a;
+  --paper: #ffffff;
+  --muted: #666666;
+  --faint: #cccccc;
+  color-scheme: light;
+  font: 14px/1.5 'Segoe UI', system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
 }
 
-main {
-  min-height: 100svh;
+#app,
+.app {
+  height: 100svh;
   display: flex;
   flex-direction: column;
+}
+
+/* ── Fixed top bar: outside the SVG, unaffected by zoom/pan ── */
+.topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--ink);
+  background: var(--paper);
+}
+
+.app-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+button.danger {
+  margin-top: 16px;
+}
+
+/* ── Workspace: canvas + editor panel ── */
+.workspace {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+.canvas-host {
+  flex: 1 1 auto;
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.tree-svg {
+  display: block;
+  cursor: grab;
+}
+
+.empty-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
   align-items: center;
   justify-content: center;
-  text-align: center;
-  gap: 8px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+/* ── SVG tree ── */
+.shape {
+  fill: var(--paper);
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+
+.shape.selected {
+  stroke-width: 3;
+}
+
+.node {
+  cursor: pointer;
+}
+
+.node-label {
+  fill: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  text-anchor: middle;
+}
+
+.node-ev {
+  fill: var(--muted);
+  font-size: 11px;
+  text-anchor: middle;
+}
+
+.node-warning {
+  fill: var(--ink);
+  font-size: 10px;
+  font-style: italic;
+  text-anchor: middle;
+}
+
+.leaf-label {
+  text-anchor: start;
+}
+
+.edge {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+
+.edge-label {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+/* ── Editor panel ── */
+.panel {
+  flex: 0 0 300px;
+  border-left: 1px solid var(--ink);
+  padding: 14px;
+  overflow-y: auto;
+  background: var(--paper);
+}
+
+.panel h3 {
+  font-size: 13px;
+  margin: 16px 0 6px;
+}
+
+.node-meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+
+.field {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.field > span {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.field input,
+.field select,
+.conditional-row input {
+  width: 100%;
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.conditional-row {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.conditional-row input:first-child {
+  flex: 1 1 auto;
+}
+
+.conditional-row input:nth-child(2) {
+  flex: 0 0 60px;
+}
+
+.conditional-editor button,
+.create-form button,
+.backfill button {
+  margin: 4px 4px 4px 0;
+}
+
+.message {
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
 }
