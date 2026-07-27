@@ -323,6 +323,84 @@ describe('createApp', () => {
     expect(container.querySelector('[data-node-id="n1"] .node-ev')!.textContent).toBe('CE –')
   })
 
+  it('shows the calculation trace for a selected node, live and mode-aware', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Väder')
+    const rain = app.api.addOutcomeTo(root, 'Regn', 0.3, 8)
+    app.api.addOutcomeTo(root, 'Sol', 0.7, 2)
+
+    const traceBar = container.querySelector('.trace-bar') as HTMLElement
+    // createRoot auto-selects the root, so the trace is already visible.
+    app.api.selectNode(root)
+    expect(traceBar.style.display).not.toBe('none')
+    expect(traceBar.textContent).toBe('Beräkning (Väder): 0.3 × 8 + 0.7 × 2 = 3.8')
+
+    // Live update: change a payoff, trace text follows.
+    app.api.setValue(rain, 18)
+    expect(traceBar.textContent).toBe('Beräkning (Väder): 0.3 × 18 + 0.7 × 2 = 6.8')
+
+    // EU mode: trace switches to the utility/CE form.
+    app.api.setValue(rain, 8)
+    app.api.setDisplayMode('eu')
+    expect(traceBar.textContent).toContain('EU =')
+    expect(traceBar.textContent).toContain('→ CE =')
+
+    // Deselect hides it.
+    app.api.selectNode(null)
+    expect(traceBar.style.display).toBe('none')
+  })
+
+  it('trace shows the incomplete message when data is missing', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'A', NaN, 8) // probability unset
+    app.api.addOutcomeTo(root, 'B', NaN, 2)
+    app.api.selectNode(root)
+    expect((container.querySelector('.trace-bar') as HTMLElement).textContent).toContain(
+      'Ofullständig data',
+    )
+  })
+
+  it('terminal dialog shows the utility transform in EU mode only', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'A', 1, 10)
+
+    // EV mode: no utility line.
+    container.querySelector('g.leaf')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(container.querySelector('.dialog')!.textContent).not.toContain('Nyttotransform')
+    container.querySelector('.dialog-overlay')!.dispatchEvent(
+      new MouseEvent('click', { bubbles: true }),
+    )
+
+    // EU mode: u(10) shown.
+    app.api.setDisplayMode('eu')
+    container.querySelector('g.leaf')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(container.querySelector('.dialog')!.textContent).toContain('u(10) = 6.321')
+  })
+
+  it('Σ-warning uses resolved conditional probabilities and shows in both modes', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Root')
+    const a = app.api.addOutcomeTo(root, 'A', 1)
+    const mid = app.api.attachChild(root, a, 'chance', 'Mid')
+    app.api.addOutcomeTo(mid, 'X', 0.5, 8)
+    app.api.addOutcomeTo(mid, 'Y', 0.5, 2)
+    // Base probs sum to 1, but a matching conditional row sums to 1.2 — the
+    // warning must reflect the resolved (conditional) probabilities.
+    app.api.setConditionalTable(mid, [
+      { condition: new Set([`${root.id}:A`]), probabilities: { X: 0.9, Y: 0.3 } },
+    ])
+
+    const midWarning = () =>
+      container.querySelector('[data-node-id="' + mid.id + '"] .node-warning')?.textContent ?? null
+    expect(midWarning()).toBe('Σ = 1.2 ⚠')
+
+    // Still shown in EU mode (rendering is mode-independent for warnings).
+    app.api.setDisplayMode('eu')
+    expect(midWarning()).toBe('Σ = 1.2 ⚠')
+  })
+
   it('"Lägg till nod" opens the create-root dialog only for an empty tree', () => {
     const { app, container } = newApp()
     const btn = container.querySelector('#add-node') as HTMLButtonElement

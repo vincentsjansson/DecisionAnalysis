@@ -12,6 +12,7 @@ import type { ConditionalRow } from '../model/tree'
 import { backwardFill } from '../model/backwardFill'
 import { reverseTreeWithBayes } from '../model/bayesReversal'
 import { certaintyEquivalent } from '../model/expectedUtility'
+import { traceNode, traceTerminalUtility } from '../model/calculationTrace'
 import {
   applyInverseUtility,
   applyUtility,
@@ -154,6 +155,12 @@ export function createApp(
   vocBar.className = 'voc-bar'
   vocBar.style.display = 'none'
 
+  // Calculation-trace bar: shows the arithmetic behind the selected node's
+  // value. Visible only while a node is selected.
+  const traceBar = document.createElement('div')
+  traceBar.className = 'trace-bar'
+  traceBar.style.display = 'none'
+
   const workspace = document.createElement('div')
   workspace.className = 'workspace'
   const canvasHost = document.createElement('div')
@@ -186,6 +193,7 @@ export function createApp(
     utilityBar,
     utilityErrorEl,
     vocBar,
+    traceBar,
     workspace,
     menuLayer,
     dialogLayer,
@@ -266,6 +274,19 @@ export function createApp(
     if (!node.parent) return null
     const edge = node.parent.outcomes.find((o) => o.child === node)
     return edge ? { parent: node.parent, edge } : null
+  }
+
+  /** History token set for the path root -> `node` (the outcome labels taken
+   * to reach it), so conditional probabilities resolve correctly for the
+   * node's calculation trace. */
+  const historyFor = (node: TreeNode): Set<string> => {
+    const tokens: string[] = []
+    let current = node
+    for (let inc = incomingEdge(current); inc; inc = incomingEdge(current)) {
+      tokens.push(branchLabel(inc.parent, inc.edge.label))
+      current = inc.parent
+    }
+    return new Set(tokens)
   }
 
   const nodeById = (id: string): TreeNode | null => {
@@ -864,6 +885,15 @@ export function createApp(
     const initialValue = valueInput.value
     body.appendChild(fieldRow('Värde (payoff)', valueInput))
 
+    // In EU mode, show the utility transform happening at this terminal.
+    if (state.displayMode === 'eu') {
+      const uTrace = traceTerminalUtility(edge.value, state.utilityFn)
+      const uLine = document.createElement('p')
+      uLine.className = 'trace-line'
+      uLine.textContent = `Nyttotransform: ${uTrace.text}`
+      body.appendChild(uLine)
+    }
+
     const jointInput = textInput('')
     jointInput.placeholder = 'mål-sannolikhet (0–1]'
     body.appendChild(fieldRow('Sätt joint probability (backward-fill)', jointInput))
@@ -1181,6 +1211,19 @@ export function createApp(
     }
   }
 
+  /** Shows the arithmetic behind the selected node's value, live and
+   * mode-aware. Hidden when nothing is selected. */
+  const updateTraceBar = (): void => {
+    if (!state.selected) {
+      traceBar.style.display = 'none'
+      return
+    }
+    const node = state.selected
+    const trace = traceNode(node, historyFor(node), state.displayMode, state.utilityFn)
+    traceBar.textContent = `Beräkning (${node.label}): ${trace.text}`
+    traceBar.style.display = ''
+  }
+
   function render(): void {
     svg = renderTree(canvasHost, state.root, {
       selected: state.selected,
@@ -1202,6 +1245,7 @@ export function createApp(
     })
     syncModeControls()
     renderRightPane()
+    updateTraceBar()
   }
 
   render()

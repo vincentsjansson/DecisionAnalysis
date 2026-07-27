@@ -165,6 +165,25 @@ button.primary {
   margin: 0;
 }
 
+/* ── Calculation-trace bar: the arithmetic behind the selected node ── */
+.trace-bar {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--ink);
+  padding: 6px 16px;
+  font-size: 13px;
+  background: var(--paper);
+  /* Keep the full expression readable at high branching factors by wrapping
+     rather than truncating — the arithmetic stays complete and honest. */
+  white-space: normal;
+  word-break: break-word;
+}
+
+.trace-line {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 0;
+}
+
 /* ── VOC bar: the pedagogical payoff, shown only in split mode ── */
 .voc-bar {
   flex: 0 0 auto;
