@@ -4,6 +4,29 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-07-27 — Legacy-genomgång (den riktiga koden) + tre låsta arkitekturbeslut
+
+**Vad hände:** Vincent pekade ut en lokal mapp (`C:\Users\vince\Desktop\prog\git test\Beslutsanalys`) som visade sig innehålla en betydligt mer komplett version av det gamla projektet än vad GitHub hade — en fungerande FastAPI-backend (`main.py`, `/ev`, `/backward`), riktig EV- och backward-fill-logik, och en nästan komplett WPF-app (canvas-rendering, dialoger, save/load). Denna ersatte den tunnare GitHub-baserade `legacy/`-arkiveringen (se separat commit).
+
+En fullständig genomläsning av `legacy/frontend/csharp-wpf/MainWindow.xaml.cs` (1171 rader), `ViewModels/TreeViewModel.cs` och `legacy/backend/treelogic.py` avslöjade:
+
+- **Legacy's "träd" är i själva verket en platt sekvens** — `TreeViewModel.Sequence` låter alla outcomes på en nivå peka på samma nod-objekt på nästa nivå (`RebuildLinks()`). Asymmetriska träd är därför omöjliga i legacy-UI:t, och det är därför `LeafValues`/`NodeEvValues` måste vara path-keyed.
+- Tre inbördes oförenliga nyckelformat för villkorade sannolikheter (UI: `"Nod = Outcome"`, forward-check: bara outcome-namn, traversering: `"Nod:Outcome"`) — subset-matchningen kunde aldrig träffa något UI:t skickade, och `calculate_ev` anropade aldrig villkors-upplösningen alls. Skärmen och beräkningen motsade varandra tyst.
+- VOC-knappen var en återvändsgränd (Run EV fanns bara på vänster träd).
+- Remove-node skyddade åt fel håll; rename bröt namnbaserade conditional-table-referenser tyst; tre olika sannolikhetssumma-toleranser; kantetiketter kolliderade blint.
+
+**Tre arkitekturbeslut låsta som resultat** (dokumenterade i SPEC.md under "Lärdomar från legacy-genomgången"):
+
+1. Rendering/UI byggs kring **äkta, potentiellt asymmetriska träd** (TS-modellen stödjer redan detta) — inte en pill-sequence-bar som legacy.
+2. **Flip/split kräver riktig Bayes-omvändning** (marginaler + posteriorer), inte legacy's oförändrade sannolikhetskopiering, eftersom det senare ger tyst felaktig VOC så fort villkorade sannolikheter är i spel. Flip/split blir därför ett eget, senare segment — **inte** en del av det kommande rendering/UI-segmentet.
+3. **Backward-fill behåller "justera första justerbara nod"-regeln**, men görs transparent (rapporterar till användaren vilken kant som ändrades) istället för att bara loggas tyst som i legacy.
+
+De övriga legacy-buggarna är dokumenterade i SPEC.md som referens ("bugs att inte upprepa") — redan förhindrade av TS-modellens grundarkitektur (ett villkorsformat, hårda fel istället för tyst normalisering, äkta träd, id:n istället för namn).
+
+**Kvarstår:** Rendering/UI (äkta träd-interaktion), VOC, beräkningssteg-visning, save/load-UI, undo/redo, PNG-export, och (nu bekräftat som eget segment) flip/split med Bayes-omvändning.
+
+---
+
 ## 2026-07-25 (segment 3) — Kärndatamodell, beräkningslogik och tester
 
 **Vad hände:** Claude Code körde prompt #2 på `rebuild-typescript`.
