@@ -161,6 +161,79 @@ describe('createApp', () => {
     void container
   })
 
+  it('split mode: flip renders both trees, edits re-flip live, merge discards', () => {
+    const { app, container } = newApp()
+    // Classic tree: Bet(decision): Yes -> Weather(Rain 0.3 -> 8, Sun 0.7 -> 2), No -> 3.
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    app.api.addOutcomeTo(root, 'No', NaN, 3)
+    const weather = app.api.attachChild(root, yes, 'chance', 'Weather')
+    const rain = app.api.addOutcomeTo(weather, 'Rain', 0.3, 8)
+    const sun = app.api.addOutcomeTo(weather, 'Sun', 0.7, 2)
+
+    const rightPane = container.querySelector('.right-pane') as HTMLElement
+    const vocBar = container.querySelector('.voc-bar') as HTMLElement
+    expect(rightPane.style.display).toBe('none')
+
+    app.api.toggleSplit()
+
+    // Both trees rendered; right is the flipped one (Weather at its root).
+    expect(rightPane.style.display).not.toBe('none')
+    expect(rightPane.textContent).toContain('klarsyn')
+    // flip_1 is the flipped tree's root — the chance variable moved first.
+    expect(
+      container.querySelector('.canvas-right [data-node-id="flip_1"] .node-label')!.textContent,
+    ).toBe('Weather')
+    const rightLabels = [...container.querySelectorAll('.canvas-right .node-label')].map(
+      (n) => n.textContent,
+    )
+    expect(rightLabels).toContain('Bet')
+    // Hand-calculated: EV orig 3.8, EV flipped 4.5, VOC 0.7.
+    expect(vocBar.textContent).toContain('EV original = 3.8')
+    expect(vocBar.textContent).toContain('4.5')
+    expect(vocBar.textContent).toContain('VOC = 0.7')
+
+    // Editing the left tree re-flips the right side live.
+    app.api.setProbability(rain, 0.6)
+    app.api.setProbability(sun, 0.4)
+    // New: EV orig = max(0.6·8+0.4·2, 3) = 5.6; flipped = 0.6·8+0.4·3 = 6; VOC 0.4.
+    expect(vocBar.textContent).toContain('VOC = 0.4')
+
+    // The right tree is read-only: clicking its nodes opens no menu.
+    container
+      .querySelector('.canvas-right [data-node-id]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(container.querySelector('.menu')).toBeNull()
+
+    // Merge back: right pane and VOC bar hidden, left tree intact.
+    app.api.toggleSplit()
+    expect(rightPane.style.display).toBe('none')
+    expect(vocBar.style.display).toBe('none')
+    expect(app.state.root).toBe(root)
+    expect(container.querySelector('.canvas-right svg')).toBeNull()
+  })
+
+  it('split mode shows the specific flip error for an unflippable tree', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    const no = app.api.addOutcomeTo(root, 'No')
+    const weather = app.api.attachChild(root, yes, 'chance', 'Weather')
+    app.api.addOutcomeTo(weather, 'Rain', 0.5, 1)
+    app.api.addOutcomeTo(weather, 'Sun', 0.5, 2)
+    const market = app.api.attachChild(root, no, 'chance', 'Market')
+    app.api.addOutcomeTo(market, 'Up', 0.5, 3)
+    app.api.addOutcomeTo(market, 'Down', 0.5, 4)
+
+    app.api.toggleSplit()
+
+    const error = container.querySelector('.flip-error') as HTMLElement
+    expect(error.style.display).not.toBe('none')
+    expect(error.textContent).toContain('Weather')
+    expect(error.textContent).toContain('Market')
+    expect((container.querySelector('.voc-bar') as HTMLElement).textContent).toBe('VOC = –')
+  })
+
   it('"Lägg till nod" opens the create-root dialog only for an empty tree', () => {
     const { app, container } = newApp()
     const btn = container.querySelector('#add-node') as HTMLButtonElement

@@ -10,6 +10,7 @@ import {
 } from '../model/tree'
 import type { ConditionalRow } from '../model/tree'
 import { backwardFill } from '../model/backwardFill'
+import { reverseTreeWithBayes } from '../model/bayesReversal'
 import { applyViewTransform, fmt, renderTree } from '../render/renderTree'
 import type { ViewTransform } from '../render/renderTree'
 
@@ -17,7 +18,11 @@ export interface AppState {
   root: TreeNode | null
   selected: TreeNode | null
   message: string
+  /** Split mode: left = editable original, right = derived read-only
+   * clairvoyance tree, recomputed from the left tree on every render. */
+  split: boolean
   view: ViewTransform
+  viewRight: ViewTransform
   idCounter: number
 }
 
@@ -34,6 +39,7 @@ export interface AppApi {
   setConditionalTable(node: TreeNode, rows: ConditionalRow[]): void
   deleteNode(node: TreeNode): void
   applyBackwardFill(node: TreeNode, edge: Outcome, targetProbability: number): void
+  toggleSplit(): void
   selectNode(node: TreeNode | null): void
   render(): void
 }
@@ -54,7 +60,9 @@ export function createApp(
     root: null,
     selected: null,
     message: '',
+    split: false,
     view: { scale: 1, x: 0, y: 0 },
+    viewRight: { scale: 1, x: 0, y: 0 },
     idCounter: 0,
   }
 
@@ -70,14 +78,38 @@ export function createApp(
   const addBtn = document.createElement('button')
   addBtn.id = 'add-node'
   addBtn.textContent = 'Lägg till nod'
-  topbar.append(title, addBtn)
+  const flipBtn = document.createElement('button')
+  flipBtn.id = 'flip'
+  flipBtn.textContent = '⇄ Flip'
+  topbar.append(title, addBtn, flipBtn)
 
   const messageStrip = document.createElement('div')
   messageStrip.className = 'message-strip'
   messageStrip.style.display = 'none'
 
+  const vocBar = document.createElement('div')
+  vocBar.className = 'voc-bar'
+  vocBar.style.display = 'none'
+
+  const workspace = document.createElement('div')
+  workspace.className = 'workspace'
   const canvasHost = document.createElement('div')
   canvasHost.className = 'canvas-host'
+
+  const rightPane = document.createElement('div')
+  rightPane.className = 'right-pane'
+  rightPane.style.display = 'none'
+  const rightCaption = document.createElement('div')
+  rightCaption.className = 'pane-caption'
+  rightCaption.textContent = 'Omvänt träd (klarsyn) — skrivskyddat'
+  const rightHost = document.createElement('div')
+  rightHost.className = 'canvas-host canvas-right'
+  const flipErrorEl = document.createElement('div')
+  flipErrorEl.className = 'flip-error'
+  flipErrorEl.style.display = 'none'
+  rightPane.append(rightCaption, rightHost, flipErrorEl)
+
+  workspace.append(canvasHost, rightPane)
 
   const menuLayer = document.createElement('div')
   menuLayer.className = 'menu-layer'
@@ -85,47 +117,62 @@ export function createApp(
   const dialogLayer = document.createElement('div')
   dialogLayer.className = 'dialog-layer'
 
-  container.append(topbar, messageStrip, canvasHost, menuLayer, dialogLayer)
+  container.append(topbar, messageStrip, vocBar, workspace, menuLayer, dialogLayer)
 
   let svg: SVGSVGElement | null = null
+  let svgRight: SVGSVGElement | null = null
 
-  // ── Zoom & pan, scoped to the canvas only ──
-  canvasHost.addEventListener(
-    'wheel',
-    (e) => {
-      e.preventDefault()
-      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
-      const newScale = Math.min(3, Math.max(0.2, state.view.scale * factor))
-      const rect = canvasHost.getBoundingClientRect()
-      const mx = e.clientX - rect.left
-      const my = e.clientY - rect.top
-      state.view.x = mx - ((mx - state.view.x) / state.view.scale) * newScale
-      state.view.y = my - ((my - state.view.y) / state.view.scale) * newScale
-      state.view.scale = newScale
-      if (svg) applyViewTransform(svg, state.view)
-    },
-    { passive: false },
-  )
+  // ── Zoom & pan, scoped to each canvas only. The view object is mutated
+  //    in place so both hosts keep a stable reference across renders. ──
+  const wireNav = (
+    host: HTMLElement,
+    view: ViewTransform,
+    getSvg: () => SVGSVGElement | null,
+  ): void => {
+    host.addEventListener(
+      'wheel',
+      (e) => {
+        e.preventDefault()
+        const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
+        const newScale = Math.min(3, Math.max(0.2, view.scale * factor))
+        const rect = host.getBoundingClientRect()
+        const mx = e.clientX - rect.left
+        const my = e.clientY - rect.top
+        view.x = mx - ((mx - view.x) / view.scale) * newScale
+        view.y = my - ((my - view.y) / view.scale) * newScale
+        view.scale = newScale
+        const s = getSvg()
+        if (s) applyViewTransform(s, view)
+      },
+      { passive: false },
+    )
 
-  let panStart: { mx: number; my: number; vx: number; vy: number } | null = null
-  canvasHost.addEventListener('pointerdown', (e) => {
-    if ((e.target as Element).closest('g.node, g.leaf')) return
-    panStart = { mx: e.clientX, my: e.clientY, vx: state.view.x, vy: state.view.y }
-  })
-  canvasHost.addEventListener('pointermove', (e) => {
-    if (!panStart) return
-    state.view.x = panStart.vx + e.clientX - panStart.mx
-    state.view.y = panStart.vy + e.clientY - panStart.my
-    if (svg) applyViewTransform(svg, state.view)
-  })
-  canvasHost.addEventListener('pointerup', () => {
-    panStart = null
-  })
-  canvasHost.addEventListener('dblclick', (e) => {
-    if ((e.target as Element).closest('g.node, g.leaf')) return
-    state.view = { scale: 1, x: 0, y: 0 }
-    if (svg) applyViewTransform(svg, state.view)
-  })
+    let panStart: { mx: number; my: number; vx: number; vy: number } | null = null
+    host.addEventListener('pointerdown', (e) => {
+      if ((e.target as Element).closest('g.node, g.leaf')) return
+      panStart = { mx: e.clientX, my: e.clientY, vx: view.x, vy: view.y }
+    })
+    host.addEventListener('pointermove', (e) => {
+      if (!panStart) return
+      view.x = panStart.vx + e.clientX - panStart.mx
+      view.y = panStart.vy + e.clientY - panStart.my
+      const s = getSvg()
+      if (s) applyViewTransform(s, view)
+    })
+    host.addEventListener('pointerup', () => {
+      panStart = null
+    })
+    host.addEventListener('dblclick', (e) => {
+      if ((e.target as Element).closest('g.node, g.leaf')) return
+      view.scale = 1
+      view.x = 0
+      view.y = 0
+      const s = getSvg()
+      if (s) applyViewTransform(s, view)
+    })
+  }
+  wireNav(canvasHost, state.view, () => svg)
+  wireNav(rightHost, state.viewRight, () => svgRight)
 
   const nextId = (): string => `n${++state.idCounter}`
 
@@ -265,6 +312,14 @@ export function createApp(
           `${fmt(result.oldProbability)} → ${fmt(result.newProbability)}` +
           (parts.length > 0 ? ` · syskon omskalade: ${parts.join(', ')}` : ''),
       )
+      render()
+    },
+
+    toggleSplit() {
+      state.split = !state.split
+      state.viewRight.scale = 1
+      state.viewRight.x = 0
+      state.viewRight.y = 0
       render()
     },
 
@@ -803,6 +858,50 @@ export function createApp(
     }
   })
 
+  flipBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    api.toggleSplit()
+  })
+
+  /** The right pane is always derived: recomputed from the left tree on
+   * every render, so edits on the left re-flip automatically. Flip errors
+   * (unflippable structure) are shown verbatim — the user needs to know
+   * exactly which variables/paths conflict. */
+  const renderRightPane = (): void => {
+    flipBtn.textContent = state.split ? '⇄ Sammanfoga' : '⇄ Flip'
+    rightPane.style.display = state.split ? '' : 'none'
+    vocBar.style.display = state.split ? '' : 'none'
+    if (!state.split) {
+      rightHost.replaceChildren()
+      svgRight = null
+      return
+    }
+
+    if (!state.root) {
+      rightHost.replaceChildren()
+      svgRight = null
+      flipErrorEl.style.display = 'none'
+      vocBar.textContent = 'VOC = – (tomt träd)'
+      return
+    }
+
+    try {
+      const result = reverseTreeWithBayes(state.root)
+      svgRight = renderTree(rightHost, result.flipped, { view: state.viewRight })
+      flipErrorEl.style.display = 'none'
+      vocBar.textContent =
+        `EV original = ${fmt(result.originalEv)} · ` +
+        `EV omvänt (klarsyn) = ${fmt(result.flippedEv)} · ` +
+        `VOC = ${fmt(result.voc)}`
+    } catch (e) {
+      rightHost.replaceChildren()
+      svgRight = null
+      flipErrorEl.textContent = e instanceof Error ? e.message : String(e)
+      flipErrorEl.style.display = ''
+      vocBar.textContent = 'VOC = –'
+    }
+  }
+
   function render(): void {
     svg = renderTree(canvasHost, state.root, {
       selected: state.selected,
@@ -820,6 +919,7 @@ export function createApp(
         render()
       },
     })
+    renderRightPane()
   }
 
   render()
