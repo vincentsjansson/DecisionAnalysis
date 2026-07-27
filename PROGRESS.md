@@ -4,6 +4,32 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-07-27 (segment 6) — Flip/split med korrekt klarsyns-matematik + VOC
+
+**Bakgrund:** De tre tidigare öppna flip-frågorna låstes av Vincent: (1) scope = alla paths möter samma variabelsekvens, tidig terminering hanteras med läroboks-dupliceringsregeln, allt annat är hårt fel; (2) semantik = klassisk klarsyn (chans före beslut), VOC = EV(omvänt) − EV(original) ≥ 0 med hård invariant; (3) konstruktion = det flippade trädet är ett helt nytt äkta träd med posteriorer som bas-sannolikheter, inga villkorstabeller.
+
+**Vad byggdes:**
+
+- **`src/model/bayesReversal.ts`:** `reverseTreeWithBayes(root)` → `{ flipped, voc, originalEv, flippedEv }`. Validering i insamlingssteget: kanonisk variabelsekvens (etikett + nodtyp per nivå), identiska utfallsmängder per variabel, Σ=1 per chansnod-instans (NaN = ofullständigt tillåts och propagerar), beslutsberoende chansfördelningar avvisas (klarsyn vore cirkulär), dubblerade variabelnamn över nivåer avvisas. Bygget: chansvariabler först (ursprunglig inbördes ordning), sedan besluten; per-gren-nodkopior med kontextupplösta fördelningar som bassannolikheter; payoff-funktionen evalueras ur originalträdet per fullständig variabeltilldelning — dupliceringsregeln faller ut naturligt, och variabler som en grens payoffs inte beror på hoppas över (speglar originalets tidiga terminering).
+- **UI:** Flip-knapp → split-läge med två canvas. Höger = klarsynsträdet, skrivskyddat med egen zoom/pan och rubriken "Omvänt träd (klarsyn)". VOC-rad ("EV original = … · EV omvänt = … · VOC = …"). Vänsterredigering re-flippar live. Oflippbart träd visar algoritmens exakta felmeddelande i högerpanelen. Sammanfoga återgår och kastar det härledda trädet.
+- **Tester:** 16 nya (14 modell + 2 UI), totalt 87, alla gröna. Handräknade: klassiska fallet (VOC 0.7, "Nej"-payoff duplicerad), tvåvariabelfallet med path-beroende fördelningar (VOC 1.4), chans-först-no-op (VOC exakt 0), alla fem avvisningsfallen, NaN-propagering, VOC-invarianten (kastar på −0.5, klampar −1e−12), split-cykeln flip → redigera → live re-flip (0.7 → 0.4 handräknat) → sammanfoga.
+- **Browser-verifierat:** hela flödet byggt via dialogerna (Satsa/Väder-trädet), flip → VOC 0.7, backward-fill i split-läge → live re-flip → VOC 0.4, sammanfoga → vänsterträdet intakt. Inga konsolfel.
+
+**Judgment calls:**
+
+1. **Promptens steg 3–4 (marginal per terminal, P(path|terminal)) implementerades inte** — de ingår inte i den klassiska klarsyns-konstruktionen som de låsta besluten definierar. De posteriorer som faktiskt behövs (och används) är de kontextupplösta chansfördelningarna P(V | tidigare chansutfall). Chansvariabler behåller sin inbördes ordning: för klarsyns-EV (Σ_ω P(ω)·max) är den irrelevant, så ingen chans-mot-chans-Bayes-inversion behövs någonsin.
+2. **Variabler identifieras med etikett + nodtyp** (i ett äkta träd är samma variabel olika nodobjekt per gren). Samma etikett på två olika nivåer avvisas med tydligt fel.
+3. **Flera beslut stöds generellt:** alla chansvariabler före alla beslut, båda grupperna behåller inbördes ordning.
+4. **Beslutsberoende chansfördelningar avvisas** (tolerans 1e-9, NaN≡NaN) hellre än medlas — "lär dig utfallet innan du beslutar" är odefinierat om utfallet beror på beslutet.
+5. **Σ≠1 blockerar flip med tydligt fel; helt osatta sannolikheter (NaN) tillåts** och ger VOC "–" — konsistent med appens ofullständighets-filosofi och viktigt för live re-flip medan man bygger.
+6. **Flippade trädet trunkeras per gren** när payoffs inte beror på återstående variabler (ingen meningslös nivå med odefinierade sannolikheter).
+7. **Högerträdet ritas vänster-till-höger som vänsterträdet,** inte speglat som legacy — läsbarhet före spegel-estetik; markerat ⚠️ i SPEC om det vill återinföras.
+8. **VOC-raden visar även båda EV-värdena,** inte bara differensen — pedagogiskt är jämförelsen poängen.
+
+**Kvarstår (❌):** beräkningssteg-visning, save/load-UI, undo/redo, PNG-export. (Obs: uppdragstexten nämnde "EU" som nästa MVP-segment enligt en prioritetsordning i SPEC.md — någon sådan finns inte i SPEC.md ännu; ovanstående är vad SPEC faktiskt listar som ❌.)
+
+---
+
 ## 2026-07-27 (segment 5) — Refaktor till läroboksmodellen + legacy's interaktions-UX
 
 **Bakgrund:** Flip/split-segmentet pausades vid en genuin matematisk oklarhet i Bayes-omvändnings-spec:en (dokumenterad i föregående konversation — de tre öppna frågorna om scope/semantik/konstruktion är **fortfarande obesvarade** och flip är fortsatt pausad). Istället analyserades legacy-UI:t på djupet på Vincents begäran (menystruktur, dialoger, interaktionsflöden), vilket ledde till tre bekräftade beslut:

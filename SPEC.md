@@ -48,14 +48,15 @@ Dessa är redan förhindrade av TS-modellens grundarkitektur (ett villkorsformat
 
 - ✅ EV per nod: slumpnoder = viktat medelvärde över utfallen (terminalt utfall bidrar med sitt `value`, barn med sitt EV); beslutsnoder = max. Rekursiv, fungerar på varje nod i trädet (`src/model/expectedValue.ts`).
 - ✅ Backward-fill: `src/model/backwardFill.ts` — målet är ett terminalt utfall; justerar första justerbara noden längs pathen (slumpnod, >1 utfall, ej styrd av matchande villkorsrad), löser ut sannolikheten mot mål-joint, omskalar syskon proportionellt. Returnerar full rapport (nod, utfall, gammal/ny, syskonjusteringar) som UI:t visar i meddelanderaden — aldrig tyst (låst beslut #3). Kastar `BackwardFillError` vid onåbart mål.
-- ❌ VOC (Value of Clairvoyance).
+- ✅ VOC (Value of Clairvoyance): `src/model/bayesReversal.ts` — klassisk klarsyn (chansvariabler flyttas före besluten), VOC = EV(omvänt) − EV(original). Hård invariant: genuint negativ VOC kastar fel (perfekt information kan aldrig skada — negativt betyder bugg), float-brus klampas till 0. Scope: alla paths måste möta samma variabler (etikett + typ) i samma ordning; tidig terminering hanteras med läroboks-dupliceringsregeln; strukturkonflikt, olika utfallsmängder, beslutberoende chansfördelningar, dubblerade variabelnamn och Σ≠1 ger specifika `FlipError` istället för tyst fel svar. Osatta sannolikheter propagerar till VOC = "–".
 - ❌ Beräkningssteg-visning (pedagogisk, t.ex. "0.3 × 8 + 0.7 × 2 = 4.2").
 - ✅ Sannolikhetsvalidering: `src/model/validateProbabilities.ts` kastar `ProbabilitySumError` (med nod-id och faktisk summa) om villkorade sannolikheter för en nod inte summerar till 1 inom tolerans 1e-6 — normaliserar inte tyst. UI:t visar varningen icke-blockerande på noden ("Σ = 0.6 ⚠"), och skiljer på *fel* summa och *ofullständig* data ("p ofullständig" när sannolikheter är osatta).
 
 ## Flip / split
 
-- ❌ Flip = vänd trädet runt; split = resultatet, två oberoende trädvyer sida vid sida. **Låst beslut:** kräver riktig Bayes-omvändning (marginaler + posteriorer), inte legacy's oförändrade sannolikhetskopiering — se "Lärdomar från legacy-genomgången". Eget, dedikerat framtida segment — **inte** en del av det kommande rendering/UI-segmentet.
-- Krav: verifiera vid bygge att de två träden är helt oberoende (inga delade referenser).
+- ✅ Flip-knappen växlar till split-läge: vänster = originalträdet (redigerbart som vanligt), höger = det omvända klarsynsträdet (skrivskyddat, egen zoom/pan, tydligt märkt). VOC-rad visar EV original · EV omvänt · VOC. "Sammanfoga" går tillbaka till enkelträdsvyn.
+- ✅ Högerträdet är alltid härlett: varje redigering av vänsterträdet (sannolikheter, payoffs, backward-fill, struktur) re-flippar och uppdaterar VOC live. Oflippbara träd visar algoritmens specifika felmeddelande (vilka variabler/grenar som krockar) i högerpanelen.
+- ✅ Trädoberoende verifierat: det flippade trädet byggs som ett helt nytt träd (`flip_N`-id:n, egna nodkopior per gren, posteriorer som bas-sannolikheter — inga villkorstabeller, inga delade referenser). Testat att flippade noder inte förekommer i originalträdet.
 
 ## Rendering / UI (interaktionsmodell reviderad 2026-07-27 efter legacy-analysen)
 
@@ -66,7 +67,7 @@ Dessa är redan förhindrade av TS-modellens grundarkitektur (ett villkorsformat
 - ✅ Svart-vitt tema rakt igenom, inklusive alla dialoger (legacy's lila villkorsdialog upprepas inte).
 - ✅ **Legacy's interaktionsmodell:** klick på nod → kompakt kontextmeny (Byt namn / Redigera utfall / Växla typ / Villkorstabell / Ta bort nod), varje val öppnar en fokuserad dialog. Klick på terminalt utfall (triangel) → dialog med payoff + mål-joint-sannolikhet (backward-fill) + "Lägg till barnnod" (så växer trädet — äkta asymmetriska träd). Utfallsredigeraren har en **explicit** Normalisera-knapp och Σ-varning — normaliserar aldrig tyst. Villkorstabellen redigeras som matris (rader = villkor valda ur förfädernas utfall, kolumner = nodens utfall, "(bas)"-raden = bassannolikheterna).
 - ✅ Live EV per nod och upplöst sannolikhet per utfall — uppdateras direkt vid varje ändring, ingen "beräkna"-knapp. Ofullständig data (osatt sannolikhet/payoff, nod utan utfall) visas som "–", aldrig fabricerade värden. Nya utfall skapas med **osatt** (NaN) sannolikhet, inte 0. Backward-fill-rapporter och fel visas i meddelanderaden under toppmenyn.
-- ❌ Mirrored layout för höger träd i split-läge (hör till flip/split-segmentet).
+- ⚠️ Höger träd i split-läge ritas med samma vänster-till-höger-layout som vänsterträdet (roten till vänster), inte speglat som i legacy. Medvetet val: klarsynsträdet läses naturligast i samma riktning; spegling kan läggas till senare om det efterfrågas pedagogiskt.
 
 ## Spara / ladda
 
