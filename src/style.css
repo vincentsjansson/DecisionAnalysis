@@ -107,6 +107,64 @@ button.primary {
   font-style: italic;
 }
 
+/* ── Utility config bar (EU mode) ── */
+.utility-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--ink);
+  font-size: 13px;
+  background: var(--paper);
+}
+
+.utility-bar select,
+.utility-bar input {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+
+.utility-param {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.utility-param input {
+  width: 80px;
+}
+
+.risk-readout {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.utility-error {
+  flex: 0 0 auto;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--ink);
+  font-size: 12px;
+  font-style: italic;
+  background: var(--paper);
+}
+
+.elicit-result {
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+
+.elicit-preview {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0;
+}
+
 /* ── VOC bar: the pedagogical payoff, shown only in split mode ── */
 .voc-bar {
   flex: 0 0 auto;

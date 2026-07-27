@@ -234,6 +234,95 @@ describe('createApp', () => {
     expect((container.querySelector('.voc-bar') as HTMLElement).textContent).toBe('VOC = –')
   })
 
+  it('EU mode: toggle switches node labels from EV to CE and shows the utility bar', () => {
+    const { app, container } = newApp()
+    // Coin flip 0.5 -> 10, 0.5 -> 0. EV = 5.
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'Heads', 0.5, 10)
+    app.api.addOutcomeTo(root, 'Tails', 0.5, 0)
+
+    const evLabel = container.querySelector('[data-node-id="n1"] .node-ev')!
+    expect(evLabel.textContent).toBe('EV 5')
+    expect((container.querySelector('.utility-bar') as HTMLElement).style.display).toBe('none')
+
+    app.api.setDisplayMode('eu')
+
+    // Default EU utility is exponential γ=0.1 -> CE = 3.799 < EV 5 (risk-averse).
+    expect((container.querySelector('.utility-bar') as HTMLElement).style.display).not.toBe('none')
+    const ceLabel = container.querySelector('[data-node-id="n1"] .node-ev')!
+    expect(ceLabel.textContent).toMatch(/^CE 3\.799/)
+    expect((container.querySelector('#mode-toggle') as HTMLElement).textContent).toContain('EU/CE')
+  })
+
+  it('EU mode: linear utility makes CE equal EV again', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'Heads', 0.5, 10)
+    app.api.addOutcomeTo(root, 'Tails', 0.5, 0)
+
+    app.api.setDisplayMode('eu')
+    app.api.setUtilityType('linear')
+    expect(container.querySelector('[data-node-id="n1"] .node-ev')!.textContent).toBe('CE 5')
+    // Linear has no parameter -> γ input hidden.
+    expect((container.querySelector('.utility-param') as HTMLElement).style.display).toBe('none')
+  })
+
+  it('EU mode: changing γ updates the displayed CE live', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'Heads', 0.5, 10)
+    app.api.addOutcomeTo(root, 'Tails', 0.5, 0)
+
+    app.api.setDisplayMode('eu')
+    app.api.setUtilityParameter(-0.1) // risk-seeking -> CE > EV
+    const ce = parseFloat(
+      container.querySelector('[data-node-id="n1"] .node-ev')!.textContent!.replace('CE ', ''),
+    )
+    expect(ce).toBeGreaterThan(5)
+  })
+
+  it('EU mode: elicited γ from p is applied (γ = ln(p/(1−p)))', () => {
+    const { app } = newApp()
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'Heads', 0.5, 10)
+    app.api.addOutcomeTo(root, 'Tails', 0.5, 0)
+    app.api.setDisplayMode('eu')
+
+    // Simulate what the elicitation dialog computes and applies for p = 0.6.
+    app.api.setUtilityParameter(Math.log(0.6 / 0.4))
+    expect(app.state.utilityFn.parameter).toBeCloseTo(0.405465)
+  })
+
+  it('EU mode: split VOC is computed on certainty equivalents', () => {
+    const { app, container } = newApp()
+    // Classic Bet tree; flip gives clairvoyance value.
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    app.api.addOutcomeTo(root, 'No', NaN, 3)
+    const weather = app.api.attachChild(root, yes, 'chance', 'Weather')
+    app.api.addOutcomeTo(weather, 'Rain', 0.3, 8)
+    app.api.addOutcomeTo(weather, 'Sun', 0.7, 2)
+
+    app.api.setDisplayMode('eu')
+    app.api.toggleSplit()
+
+    const voc = container.querySelector('.voc-bar')!.textContent!
+    expect(voc).toContain('CE original')
+    expect(voc).toContain('VOC (CE)')
+  })
+
+  it('EU mode: utility errors do not crash render (graceful)', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('chance', 'Flip')
+    app.api.addOutcomeTo(root, 'Big', 1, 1000)
+    app.api.setDisplayMode('eu')
+    // γ large enough that u(1000) pushes EU past the invertible 1/γ boundary.
+    app.api.setUtilityParameter(1)
+    // Render still produced a tree; the node shows "CE –" rather than crashing.
+    expect(container.querySelector('[data-node-id="n1"]')).not.toBeNull()
+    expect(container.querySelector('[data-node-id="n1"] .node-ev')!.textContent).toBe('CE –')
+  })
+
   it('"Lägg till nod" opens the create-root dialog only for an empty tree', () => {
     const { app, container } = newApp()
     const btn = container.querySelector('#add-node') as HTMLButtonElement

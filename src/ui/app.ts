@@ -11,8 +11,19 @@ import {
 import type { ConditionalRow } from '../model/tree'
 import { backwardFill } from '../model/backwardFill'
 import { reverseTreeWithBayes } from '../model/bayesReversal'
+import { certaintyEquivalent } from '../model/expectedUtility'
+import {
+  applyInverseUtility,
+  applyUtility,
+  defaultUtilityFunction,
+  gammaFromIndifference,
+  gammaFromReferenceAmount,
+  riskOddsFromGamma,
+  UtilityDomainError,
+} from '../model/utility'
+import type { UtilityFunction, UtilityType } from '../model/utility'
 import { applyViewTransform, fmt, renderTree } from '../render/renderTree'
-import type { ViewTransform } from '../render/renderTree'
+import type { DisplayMode, ViewTransform } from '../render/renderTree'
 
 export interface AppState {
   root: TreeNode | null
@@ -21,6 +32,10 @@ export interface AppState {
   /** Split mode: left = editable original, right = derived read-only
    * clairvoyance tree, recomputed from the left tree on every render. */
   split: boolean
+  /** 'ev' = risk-neutral expected value; 'eu' = certainty equivalent under
+   * `utilityFn` (risk-adjusted). */
+  displayMode: DisplayMode
+  utilityFn: UtilityFunction
   view: ViewTransform
   viewRight: ViewTransform
   idCounter: number
@@ -40,6 +55,9 @@ export interface AppApi {
   deleteNode(node: TreeNode): void
   applyBackwardFill(node: TreeNode, edge: Outcome, targetProbability: number): void
   toggleSplit(): void
+  setDisplayMode(mode: DisplayMode): void
+  setUtilityType(type: UtilityType): void
+  setUtilityParameter(parameter: number): void
   selectNode(node: TreeNode | null): void
   render(): void
 }
@@ -61,6 +79,11 @@ export function createApp(
     selected: null,
     message: '',
     split: false,
+    displayMode: 'ev',
+    // Default to exponential CARA when EU mode is first opened — a standard,
+    // visibly risk-averse curve, so switching to EU actually shows CE < EV
+    // rather than the linear no-op.
+    utilityFn: defaultUtilityFunction('exponential'),
     view: { scale: 1, x: 0, y: 0 },
     viewRight: { scale: 1, x: 0, y: 0 },
     idCounter: 0,
@@ -81,11 +104,51 @@ export function createApp(
   const flipBtn = document.createElement('button')
   flipBtn.id = 'flip'
   flipBtn.textContent = '⇄ Flip'
-  topbar.append(title, addBtn, flipBtn)
+  const modeBtn = document.createElement('button')
+  modeBtn.id = 'mode-toggle'
+  topbar.append(title, addBtn, flipBtn, modeBtn)
 
   const messageStrip = document.createElement('div')
   messageStrip.className = 'message-strip'
   messageStrip.style.display = 'none'
+
+  // ── Utility-function config bar, shown only in EU mode ──
+  const utilityBar = document.createElement('div')
+  utilityBar.className = 'utility-bar'
+  utilityBar.style.display = 'none'
+  const utilityLabel = document.createElement('span')
+  utilityLabel.textContent = 'Nyttofunktion:'
+  const utilityTypeSelect = document.createElement('select')
+  utilityTypeSelect.id = 'utility-type'
+  for (const [value, label] of [
+    ['linear', 'Linjär (riskneutral)'],
+    ['exponential', 'Exponentiell'],
+  ] as const) {
+    const opt = document.createElement('option')
+    opt.value = value
+    opt.textContent = label
+    utilityTypeSelect.appendChild(opt)
+  }
+  // γ fine-tune input (exponential only) + elicitation launcher.
+  const paramLabel = document.createElement('label')
+  paramLabel.className = 'utility-param'
+  const paramLabelText = document.createElement('span')
+  paramLabelText.textContent = 'γ'
+  const paramInput = document.createElement('input')
+  paramInput.id = 'utility-parameter'
+  paramInput.type = 'text'
+  paramInput.inputMode = 'decimal'
+  paramLabel.append(paramLabelText, paramInput)
+  const elicitBtn = document.createElement('button')
+  elicitBtn.id = 'elicit'
+  elicitBtn.textContent = 'Ställ in riskattityd…'
+  const riskReadout = document.createElement('span')
+  riskReadout.className = 'risk-readout'
+  utilityBar.append(utilityLabel, utilityTypeSelect, paramLabel, elicitBtn, riskReadout)
+
+  const utilityErrorEl = document.createElement('div')
+  utilityErrorEl.className = 'utility-error'
+  utilityErrorEl.style.display = 'none'
 
   const vocBar = document.createElement('div')
   vocBar.className = 'voc-bar'
@@ -117,7 +180,16 @@ export function createApp(
   const dialogLayer = document.createElement('div')
   dialogLayer.className = 'dialog-layer'
 
-  container.append(topbar, messageStrip, vocBar, workspace, menuLayer, dialogLayer)
+  container.append(
+    topbar,
+    messageStrip,
+    utilityBar,
+    utilityErrorEl,
+    vocBar,
+    workspace,
+    menuLayer,
+    dialogLayer,
+  )
 
   let svg: SVGSVGElement | null = null
   let svgRight: SVGSVGElement | null = null
@@ -320,6 +392,23 @@ export function createApp(
       state.viewRight.scale = 1
       state.viewRight.x = 0
       state.viewRight.y = 0
+      render()
+    },
+
+    setDisplayMode(mode) {
+      state.displayMode = mode
+      render()
+    },
+
+    setUtilityType(type) {
+      // Switching type resets the parameter to that type's sensible default;
+      // the user can fine-tune afterward.
+      state.utilityFn = defaultUtilityFunction(type)
+      render()
+    },
+
+    setUtilityParameter(parameter) {
+      state.utilityFn = { ...state.utilityFn, parameter }
       render()
     },
 
@@ -863,6 +952,171 @@ export function createApp(
     api.toggleSplit()
   })
 
+  // ── Display-mode toggle + utility config wiring ──
+  modeBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    api.setDisplayMode(state.displayMode === 'ev' ? 'eu' : 'ev')
+  })
+
+  utilityTypeSelect.addEventListener('change', () => {
+    api.setUtilityType(utilityTypeSelect.value as UtilityType)
+  })
+
+  paramInput.addEventListener('change', () => {
+    const gamma = parseNum(paramInput.value)
+    if (Number.isFinite(gamma)) api.setUtilityParameter(gamma)
+  })
+
+  elicitBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    openElicitationDialog()
+  })
+
+  /** γ elicitation: choose a method (direct indifference question, or the
+   * quick reference-amount approximation), answer it, see the resulting γ and
+   * risk odds r plus example certainty equivalents, then apply. */
+  const openElicitationDialog = (): void => {
+    const { body, footer } = openDialog('Ställ in riskattityd (γ)')
+
+    const method = document.createElement('select')
+    for (const [value, label] of [
+      ['indifference', 'Indifferens-fråga'],
+      ['reference', 'Snabb approximation (referensbelopp)'],
+    ] as const) {
+      const opt = document.createElement('option')
+      opt.value = value
+      opt.textContent = label
+      method.appendChild(opt)
+    }
+    body.appendChild(fieldRow('Metod', method))
+
+    // Method 1 — indifference probability p.
+    const pField = fieldRow(
+      'Sannolikhet p: indifferent mellan 0 säkert och (p: vinn 1 / 1−p: förlora 1)',
+      textInput(''),
+    )
+    const pInput = pField.querySelector('input') as HTMLInputElement
+    pInput.placeholder = '0 < p < 1 (p = 0.5 → riskneutral)'
+
+    // Method 2 — reference amount W.
+    const wField = fieldRow('Referensbelopp W (γ ≈ 0.96 / W)', textInput(''))
+    const wInput = wField.querySelector('input') as HTMLInputElement
+    wInput.placeholder = 'W > 0'
+
+    body.append(pField, wField)
+
+    const result = document.createElement('p')
+    result.className = 'elicit-result'
+    body.appendChild(result)
+
+    const preview = document.createElement('p')
+    preview.className = 'elicit-preview'
+    body.appendChild(preview)
+
+    let computedGamma = state.utilityFn.parameter
+
+    const exampleCe = (gamma: number, win: number): number => {
+      const fn: UtilityFunction = { type: 'exponential', parameter: gamma }
+      try {
+        return applyInverseUtility(
+          0.5 * applyUtility(win, fn) + 0.5 * applyUtility(0, fn),
+          fn,
+        )
+      } catch {
+        return NaN
+      }
+    }
+
+    const recompute = (): void => {
+      try {
+        if (method.value === 'indifference') {
+          computedGamma = gammaFromIndifference(parseNum(pInput.value))
+        } else {
+          computedGamma = gammaFromReferenceAmount(parseNum(wInput.value))
+        }
+        const r = riskOddsFromGamma(computedGamma)
+        const attitude =
+          computedGamma > 1e-9 ? 'riskavert' : computedGamma < -1e-9 ? 'risksökande' : 'riskneutral'
+        result.textContent = `γ = ${fmt(computedGamma)} · riskodds r = ${fmt(r)} · ${attitude}`
+        preview.textContent =
+          `Exempel: en 50/50-chansning om 100 är värd CE = ${fmt(exampleCe(computedGamma, 100))}; ` +
+          `om 10 → CE = ${fmt(exampleCe(computedGamma, 10))}.`
+      } catch (err) {
+        result.textContent = err instanceof Error ? err.message : String(err)
+        preview.textContent = ''
+      }
+    }
+
+    const syncMethod = (): void => {
+      pField.style.display = method.value === 'indifference' ? '' : 'none'
+      wField.style.display = method.value === 'reference' ? '' : 'none'
+      recompute()
+    }
+    method.addEventListener('change', syncMethod)
+    pInput.addEventListener('input', recompute)
+    wInput.addEventListener('input', recompute)
+    syncMethod()
+
+    footer.append(
+      dialogButton('Avbryt', closeDialog),
+      dialogButton(
+        'Använd γ',
+        () =>
+          guarded(() => {
+            if (!Number.isFinite(computedGamma)) {
+              throw new Error('Ange ett giltigt värde först.')
+            }
+            // Elicitation always produces an exponential utility.
+            state.utilityFn = { type: 'exponential', parameter: computedGamma }
+            closeDialog()
+            render()
+          }),
+        true,
+      ),
+    )
+  }
+
+  /** Reflects display-mode/utility state into the top-bar controls. Built
+   * once, updated every render — no listener churn. */
+  const syncModeControls = (): void => {
+    modeBtn.textContent = state.displayMode === 'eu' ? 'Läge: EU/CE' : 'Läge: EV'
+    utilityBar.style.display = state.displayMode === 'eu' ? '' : 'none'
+    if (state.displayMode !== 'eu') {
+      utilityErrorEl.style.display = 'none'
+      return
+    }
+    utilityTypeSelect.value = state.utilityFn.type
+    const isExp = state.utilityFn.type === 'exponential'
+    paramLabel.style.display = isExp ? '' : 'none'
+    elicitBtn.style.display = isExp ? '' : 'none'
+    if (isExp) {
+      if (document.activeElement !== paramInput) {
+        paramInput.value = String(parseFloat(state.utilityFn.parameter.toPrecision(6)))
+      }
+      const r = riskOddsFromGamma(state.utilityFn.parameter)
+      riskReadout.textContent = `(riskodds r = ${fmt(r)})`
+    } else {
+      riskReadout.textContent = ''
+    }
+
+    // Surface a utility-domain error naming the cause, without crashing render.
+    if (state.root) {
+      try {
+        certaintyEquivalent(state.root, state.utilityFn)
+        utilityErrorEl.style.display = 'none'
+      } catch (e) {
+        if (e instanceof UtilityDomainError) {
+          utilityErrorEl.textContent = e.message
+          utilityErrorEl.style.display = ''
+        } else {
+          utilityErrorEl.style.display = 'none'
+        }
+      }
+    } else {
+      utilityErrorEl.style.display = 'none'
+    }
+  }
+
   /** The right pane is always derived: recomputed from the left tree on
    * every render, so edits on the left re-flip automatically. Flip errors
    * (unflippable structure) are shown verbatim — the user needs to know
@@ -887,18 +1141,43 @@ export function createApp(
 
     try {
       const result = reverseTreeWithBayes(state.root)
-      svgRight = renderTree(rightHost, result.flipped, { view: state.viewRight })
+      svgRight = renderTree(rightHost, result.flipped, {
+        view: state.viewRight,
+        displayMode: state.displayMode,
+        utilityFn: state.utilityFn,
+      })
       flipErrorEl.style.display = 'none'
-      vocBar.textContent =
-        `EV original = ${fmt(result.originalEv)} · ` +
-        `EV omvänt (klarsyn) = ${fmt(result.flippedEv)} · ` +
-        `VOC = ${fmt(result.voc)}`
+
+      if (state.displayMode === 'eu') {
+        // VOC on certainty equivalents: perfect information can't lower EU, and
+        // u⁻¹ is increasing, so CE_flipped ≥ CE_original holds — same VOC ≥ 0
+        // property as EV mode.
+        try {
+          const ceOrig = certaintyEquivalent(state.root, state.utilityFn)
+          const ceFlip = certaintyEquivalent(result.flipped, state.utilityFn)
+          vocBar.textContent =
+            `CE original = ${fmt(ceOrig)} · ` +
+            `CE omvänt (klarsyn) = ${fmt(ceFlip)} · ` +
+            `VOC (CE) = ${fmt(ceFlip - ceOrig)}`
+        } catch (err) {
+          vocBar.textContent = 'VOC (CE) = –'
+          if (err instanceof UtilityDomainError) {
+            utilityErrorEl.textContent = err.message
+            utilityErrorEl.style.display = ''
+          }
+        }
+      } else {
+        vocBar.textContent =
+          `EV original = ${fmt(result.originalEv)} · ` +
+          `EV omvänt (klarsyn) = ${fmt(result.flippedEv)} · ` +
+          `VOC = ${fmt(result.voc)}`
+      }
     } catch (e) {
       rightHost.replaceChildren()
       svgRight = null
       flipErrorEl.textContent = e instanceof Error ? e.message : String(e)
       flipErrorEl.style.display = ''
-      vocBar.textContent = 'VOC = –'
+      vocBar.textContent = state.displayMode === 'eu' ? 'VOC (CE) = –' : 'VOC = –'
     }
   }
 
@@ -906,6 +1185,8 @@ export function createApp(
     svg = renderTree(canvasHost, state.root, {
       selected: state.selected,
       view: state.view,
+      displayMode: state.displayMode,
+      utilityFn: state.utilityFn,
       onNodeClick: (node, e) => {
         api.selectNode(node)
         openNodeMenu(node, e.clientX, e.clientY)
@@ -919,6 +1200,7 @@ export function createApp(
         render()
       },
     })
+    syncModeControls()
     renderRightPane()
   }
 

@@ -1,26 +1,24 @@
-export type UtilityType = 'linear' | 'quadratic' | 'exponential' | 'logarithmic'
+export type UtilityType = 'linear' | 'exponential'
 
-/** A parametrized utility function. `parameter` means different things by
- * type — one scalar per type, which keeps the config UI to a single input:
- * - linear:      unused (u(x) = x, risk-neutral)
- * - quadratic:   b > 0, aversion strength; u(x) = x − b·x²
- * - exponential: r, CARA coefficient; u(x) = (1 − e^(−r·x)) / r  (r>0 averse)
- * - logarithmic: k, shift; u(x) = ln(x + k), requires x + k > 0 */
+/** A parametrized utility function, matching the course's u-curve forms.
+ * `parameter` means different things by type:
+ * - linear:      unused. u(x) = x (risk-neutral). Since only the ordering of
+ *                utilities matters, the general affine a + b·x is equivalent
+ *                to the identity, so we implement u(x) = x and CE = EV.
+ * - exponential: γ (gamma), the CARA coefficient. u(x) = (1 − e^(−γ·x)) / γ,
+ *                γ → 0 the risk-neutral limit. γ > 0 risk-averse,
+ *                γ < 0 risk-seeking. The course's "risk odds" r relate by
+ *                γ = ln(r): r > 1 averse, r = 1 neutral, r < 1 seeking. */
 export interface UtilityFunction {
   type: UtilityType
   parameter: number
 }
 
-/** Sensible starting parameters so a first-time user gets a reasonable curve
- * without knowing what to type. quadratic b=0.01 stays monotonically
- * increasing for payoffs up to 1/(2b) = 50; exponential r=0.1 gives visible
- * but moderate curvature for payoffs in the tens; logarithmic k=1 accepts any
- * payoff > −1. */
+/** Sensible starting parameter so a first-time user gets a reasonable curve.
+ * γ = 0.1 gives visible but moderate risk aversion for payoffs in the tens. */
 export const DEFAULT_PARAMETERS: Record<UtilityType, number> = {
   linear: 0,
-  quadratic: 0.01,
   exponential: 0.1,
-  logarithmic: 1,
 }
 
 export function defaultUtilityFunction(type: UtilityType): UtilityFunction {
@@ -36,89 +34,71 @@ export class UtilityDomainError extends Error {
 
 /** Transforms a money value into utility. NaN (an unset payoff) propagates as
  * NaN rather than throwing — the tree shows "–" for incomplete data, same as
- * everywhere else. A genuinely out-of-domain *finite* value fails loudly with
- * a specific message (the project's "no silent wrong answers" convention). */
+ * everywhere else. */
 export function applyUtility(value: number, fn: UtilityFunction): number {
   switch (fn.type) {
     case 'linear':
       return value
 
-    case 'quadratic': {
-      const b = fn.parameter
-      if (!(b > 0)) {
-        throw new UtilityDomainError(
-          `Quadratic utility needs b > 0, got b = ${b}.`,
-        )
-      }
-      // u is only increasing below the vertex x = 1/(2b); beyond it, more
-      // money would mean less utility, which is nonsensical and non-invertible.
-      if (Number.isFinite(value) && value >= 1 / (2 * b)) {
-        throw new UtilityDomainError(
-          `Quadratic utility with b = ${b} is only increasing below x = ${1 / (2 * b)}, ` +
-            `but a payoff is ${value}. Lower b or use another utility type.`,
-        )
-      }
-      return value - b * value * value
-    }
-
     case 'exponential': {
-      const r = fn.parameter
-      if (r === 0) return value // limit r → 0 is the risk-neutral identity
-      return (1 - Math.exp(-r * value)) / r
-    }
-
-    case 'logarithmic': {
-      const k = fn.parameter
-      if (Number.isFinite(value) && value + k <= 0) {
-        throw new UtilityDomainError(
-          `Logarithmic utility requires payoff + k > 0, but payoff ${value} + k ${k} = ` +
-            `${value + k} ≤ 0. Increase k or use another utility type.`,
-        )
-      }
-      return Math.log(value + k)
+      const gamma = fn.parameter
+      if (gamma === 0) return value // limit γ → 0 is the risk-neutral identity
+      return (1 - Math.exp(-gamma * value)) / gamma
     }
   }
 }
 
 /** Inverse of `applyUtility`: maps a utility back to the money value with that
- * utility — the certainty equivalent. NaN propagates; out-of-range utilities
- * fail loudly. */
+ * utility — the certainty equivalent. NaN propagates; an out-of-range utility
+ * fails loudly with a specific message (the project's "no silent wrong
+ * answers" convention). */
 export function applyInverseUtility(utility: number, fn: UtilityFunction): number {
   switch (fn.type) {
     case 'linear':
       return utility
 
-    case 'quadratic': {
-      const b = fn.parameter
-      if (!(b > 0)) {
-        throw new UtilityDomainError(`Quadratic utility needs b > 0, got b = ${b}.`)
-      }
-      const disc = 1 - 4 * b * utility
-      if (Number.isFinite(disc) && disc < 0) {
-        throw new UtilityDomainError(
-          `Quadratic inverse undefined: utility ${utility} exceeds the maximum ` +
-            `${1 / (4 * b)} reachable with b = ${b}.`,
-        )
-      }
-      // Lower root — the increasing branch (x < 1/(2b)).
-      return (1 - Math.sqrt(disc)) / (2 * b)
-    }
-
     case 'exponential': {
-      const r = fn.parameter
-      if (r === 0) return utility
-      const arg = 1 - r * utility
+      const gamma = fn.parameter
+      if (gamma === 0) return utility
+      const arg = 1 - gamma * utility
       if (Number.isFinite(arg) && arg <= 0) {
         throw new UtilityDomainError(
-          `Exponential inverse undefined: 1 − r·u = ${arg} must be > 0 (r = ${r}, u = ${utility}).`,
+          `Exponential inverse undefined: 1 − γ·u = ${arg} must be > 0 (γ = ${gamma}, u = ${utility}).`,
         )
       }
-      return -Math.log(arg) / r
-    }
-
-    case 'logarithmic': {
-      const k = fn.parameter
-      return Math.exp(utility) - k
+      return -Math.log(arg) / gamma
     }
   }
+}
+
+// ── γ elicitation (course methods) ──────────────────────────────────────────
+
+/** γ from the direct indifference question: the user is indifferent between 0
+ * for certain and a gamble that wins 1 with probability p and loses 1 with
+ * probability 1 − p. Solving the CARA indifference u(0) = p·u(1) + (1−p)·u(−1)
+ * gives the course's risk-odds r(1) = p / (1 − p) and γ = ln(r(1)) exactly
+ * (verified: e^γ = p/(1−p) satisfies the equation). p = 0.5 → γ = 0
+ * (risk-neutral). */
+export function gammaFromIndifference(p: number): number {
+  if (!(p > 0 && p < 1)) {
+    throw new UtilityDomainError(
+      `Indifferenssannolikheten p måste ligga i (0, 1), fick ${p}.`,
+    )
+  }
+  return Math.log(p / (1 - p))
+}
+
+/** γ from the quick reference-amount approximation: given a reference amount W
+ * the user bases their risk attitude on (indifference for a 50/50 gamble of
+ * +W vs −W/2 against 0), the course's closed form is γ ≈ 0.96 / W. */
+export function gammaFromReferenceAmount(W: number): number {
+  if (!(W > 0)) {
+    throw new UtilityDomainError(`Referensbeloppet W måste vara > 0, fick ${W}.`)
+  }
+  return 0.96 / W
+}
+
+/** The course's "risk odds" r = e^γ, shown alongside γ in the elicitation UI. */
+export function riskOddsFromGamma(gamma: number): number {
+  return Math.exp(gamma)
 }

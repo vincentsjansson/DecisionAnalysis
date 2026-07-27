@@ -1,6 +1,8 @@
 import type { Outcome, TreeNode } from '../model/tree'
 import { resolveProbability } from '../model/conditionalProbability'
 import { calculateExpectedValue } from '../model/expectedValue'
+import { certaintyEquivalent } from '../model/expectedUtility'
+import type { UtilityFunction } from '../model/utility'
 import { ProbabilitySumError, sumProbabilities } from '../model/validateProbabilities'
 import type { NodeBox } from './layout'
 import { layoutTree } from './layout'
@@ -13,9 +15,15 @@ export interface ViewTransform {
   y: number
 }
 
+export type DisplayMode = 'ev' | 'eu'
+
 export interface RenderOptions {
   selected?: TreeNode | null
   view?: ViewTransform
+  /** 'ev' (default, risk-neutral) shows EV per node; 'eu' shows the certainty
+   * equivalent under `utilityFn`. */
+  displayMode?: DisplayMode
+  utilityFn?: UtilityFunction
   onNodeClick?: (node: TreeNode, event: MouseEvent) => void
   onLeafClick?: (node: TreeNode, edge: Outcome, event: MouseEvent) => void
   onBackgroundClick?: () => void
@@ -40,9 +48,18 @@ function text(x: number, y: number, content: string, cls: string): SVGTextElemen
   return t
 }
 
-/** EV for one node, displayed gracefully: exceptions (no outcomes, ambiguous
- * conditionals) and NaN (unset probabilities/values) all become "–". */
-function nodeEvText(box: NodeBox): string {
+/** Per-node value label, displayed gracefully: exceptions (no outcomes,
+ * ambiguous conditionals, utility-domain errors) and NaN (unset
+ * probabilities/values) all become "–". In EU mode the label is the
+ * certainty equivalent (money), never a raw utility number. */
+function nodeValueText(box: NodeBox, opts: RenderOptions): string {
+  if (opts.displayMode === 'eu' && opts.utilityFn) {
+    try {
+      return `CE ${fmt(certaintyEquivalent(box.node, opts.utilityFn, box.history))}`
+    } catch {
+      return 'CE –'
+    }
+  }
   try {
     return `EV ${fmt(calculateExpectedValue(box.node, box.history))}`
   } catch {
@@ -181,7 +198,7 @@ export function renderTree(
 
     g.appendChild(nodeShape(box, box.node === opts.selected))
     g.appendChild(text(0, -3, box.node.label, 'node-label'))
-    g.appendChild(text(0, 13, nodeEvText(box), 'node-ev'))
+    g.appendChild(text(0, 13, nodeValueText(box, opts), 'node-ev'))
     const warning = nodeWarningText(box)
     if (warning) {
       g.appendChild(text(0, box.h / 2 + 16, warning, 'node-warning'))

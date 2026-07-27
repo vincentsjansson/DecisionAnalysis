@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { calculateEU, certaintyEquivalent } from './expectedUtility'
 import { calculateExpectedValue } from './expectedValue'
 import { addOutcome, setChild, TreeNode } from './tree'
-import { UtilityDomainError } from './utility'
 import type { UtilityFunction } from './utility'
 
 const LINEAR: UtilityFunction = { type: 'linear', parameter: 0 }
@@ -43,16 +42,7 @@ describe('calculateEU / certaintyEquivalent — core safeguard', () => {
 })
 
 describe('risk attitude properties', () => {
-  it('risk-averse quadratic: CE < EV on a nonzero-variance prospect', () => {
-    const tree = coinFlip()
-    const ev = calculateExpectedValue(tree) // 5
-    const ce = certaintyEquivalent(tree, { type: 'quadratic', parameter: 0.01 })
-    // Hand: u(10)=9, u(0)=0, EU=4.5, CE=(1−√0.82)/0.02 = 4.72307…
-    expect(ce).toBeCloseTo(4.72307, 4)
-    expect(ce).toBeLessThan(ev)
-  })
-
-  it('risk-averse exponential (r > 0): CE < EV', () => {
+  it('risk-averse exponential (γ > 0): CE < EV', () => {
     const tree = coinFlip()
     const ev = calculateExpectedValue(tree)
     const ce = certaintyEquivalent(tree, { type: 'exponential', parameter: 0.1 })
@@ -61,7 +51,7 @@ describe('risk attitude properties', () => {
     expect(ce).toBeLessThan(ev)
   })
 
-  it('risk-seeking exponential (r < 0): CE > EV', () => {
+  it('risk-seeking exponential (γ < 0): CE > EV', () => {
     const tree = coinFlip()
     const ev = calculateExpectedValue(tree)
     const ce = certaintyEquivalent(tree, { type: 'exponential', parameter: -0.1 })
@@ -72,9 +62,9 @@ describe('risk attitude properties', () => {
     const node = new TreeNode('c', 'chance', 'Certain')
     addOutcome(node, 'Only', 1, 6)
     for (const fn of [
-      { type: 'quadratic', parameter: 0.01 },
       { type: 'exponential', parameter: 0.2 },
-      { type: 'logarithmic', parameter: 1 },
+      { type: 'exponential', parameter: -0.3 },
+      { type: 'linear', parameter: 0 },
     ] as UtilityFunction[]) {
       expect(certaintyEquivalent(node, fn)).toBeCloseTo(6)
     }
@@ -92,15 +82,6 @@ describe('risk attitude properties', () => {
 })
 
 describe('EU error propagation', () => {
-  it('surfaces a utility domain error for logarithmic + negative payoff', () => {
-    const node = new TreeNode('c', 'chance', 'Flip')
-    addOutcome(node, 'Up', 0.5, 5)
-    addOutcome(node, 'Down', 0.5, -10)
-    expect(() => certaintyEquivalent(node, { type: 'logarithmic', parameter: 1 })).toThrow(
-      UtilityDomainError,
-    )
-  })
-
   it('propagates NaN when a payoff is unset', () => {
     const node = new TreeNode('c', 'chance', 'Flip')
     addOutcome(node, 'Up', 0.5, 5)
