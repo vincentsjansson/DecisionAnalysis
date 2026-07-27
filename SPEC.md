@@ -6,6 +6,19 @@ Beslut 2026-07-25: C# WPF och Python-backend skrotas. Allt byggs i TypeScript so
 
 **Teknikstack:** Vite + vanilla TypeScript, SVG-rendering av trädet, deploy till GitHub Pages via GitHub Actions. Krav: en extern, icke-teknisk person ska kunna klicka en länk och få upp verktyget direkt i webbläsaren, inget installationssteg.
 
+## MVP-prioritering (bekräftad 2026-07-27)
+
+Kursen (Grunderna för beslutsfattande och beslutsanalys, vecka 2–10) har ett mycket större kravomfång än vad som byggs nu. MVP:n är medvetet avgränsad till fyra kärnfunktioner: **trädvisualisering, EV, EU, VOC**. Allt annat (VOI för imperfekt information, känslighetsanalys, flerdimensionella värdefunktioner, relevansdiagram, risk & förmåga-modul, beslutsanalyscykel-vy) är explicit utanför MVP och kommer som senare, separata segment.
+
+**Byggordning för MVP:**
+
+1. ✅ Modellrefaktor (två nodtyper `decision`/`chance`, payoff på terminala outcomes, villkorstabeller per nod) — klar.
+2. ✅ VOC (flip/split med Bayes-omvändning för klassisk klarsyn) — klar.
+3. ❌ EU (Expected Utility) — u-funktion som parametriserad familj (linjär/kvadratisk/exponentiell/logaritmisk + riskaversionsparameter, bekräftat 2026-07-27), EV räknas om på nyttovärden, transformeras tillbaka till säkerhetsekvivalent (CE) för visning. **Nästa segment.**
+4. ❌ Pedagogiska tillägg (billiga, hög vinst): sannolikhetsvalidering som synlig UI-varning (modellogiken finns redan i `validateProbabilities`), steg-för-steg-beräkningsvisning.
+
+**Explicit uteslutet ur MVP (senare, egna segment):** VOI för imperfekt information (kräver Bayesiansk uppdatering, likelihood, sensitivitet/specificitet — bygger vidare på VOC-ramverket), känslighetsanalys, flerdimensionella värdefunktioner, relevansdiagram, risk & förmåga-modul, beslutsanalyscykel-vy, real optioner, undo/redo, PNG-export, save/load-UI.
+
 ## Bekräftad regel att inte återupprepa
 
 Tidigare C#/Python-kod hade en fältnamnsregression: C# serialiserade `conditionaltables`, Python läste `conditional_tables`. **TS-koden ska konsekvent använda `conditional_tables` (snake_case) i alla JSON-strukturer.**
@@ -81,6 +94,13 @@ Dessa är redan förhindrade av TS-modellens grundarkitektur (ett villkorsformat
 ## Export
 
 - ❌ PNG-export med transparent bakgrund, bara text/grafik synlig. Kräver att renderingen finns först.
+
+## Expected Utility (EU)
+
+- ❌ EU-beräkning (väntad nytta) som alternativ till EV. Del av MVP.
+- **U-funktion (bekräftad 2026-07-27):** parametriserad familj — användaren väljer typ (linjär/kvadratisk/exponentiell/logaritmisk) + en riskaversionsparameter. Matchar kursens standardexempel (Kim/Jane) och går att räkna CE på analytiskt (inverterbar funktion).
+- Terminala outcomes payoff-värden transformeras genom u-funktionen → EU räknas som EV men på nyttovärdena (samma decision=max/chance=weighted-average-rekursion som befintlig EV) → resultat transformeras tillbaka till säkerhetsekvivalent (CE) i pengar via den inversa u-funktionen för visning.
+- UI: användaren ska kunna välja u-funktionstyp och riskaversionsparameter, och växla vyn mellan EV-läge och EU/CE-läge.
 
 ## Explicit ur scope tills vidare
 
