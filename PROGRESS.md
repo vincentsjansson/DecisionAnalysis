@@ -4,6 +4,28 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-07-27 (segment 8) — Beräkningssteg-visning · MVP KOMPLETT
+
+**Vad hände:** Sista MVP-segmentet. Byggde steg-för-steg-visning av aritmetiken bakom varje nods värde, och regressionstestade Σ-varningen.
+
+- **`src/model/calculationTrace.ts`:** `traceNode(node, history, mode, fn)` ger en enrads, läsbar trace: slumpnod i EV-läge = viktad summa ("0.3 × 8 + 0.7 × 2 = 3.8") med resolved conditional probs; slumpnod i EU-läge = nyttosumman + CE-konvertering ("EU = 0.3 × 5.507 + 0.7 × 1.813 = 2.921 → CE = 3.454"); beslutsnod = "max(Ja: 3.8, Nej: 3) = 3.8 (välj Ja)". `traceTerminalUtility` ger "u(8) = 6.321" för terminala utfall i EU-läge. Återanvänder befintliga EV/EU/CE-funktioner för barnvärden (inga signaturändringar). ~4 signifikanta siffror (ingen float-brus). Ofullständig data → "Ofullständig data — kan inte visa beräkning".
+- **UI:** trace-bar visar vald nods beräkning, uppdateras live vid varje ändring och respekterar EV/EU-läget. Terminaldialogen får nyttotransform-rad i EU-läge.
+- **Σ-varning (Part 3):** verifierat att den fungerar i båda lägen och använder resolved (conditional-table-medvetna) sannolikheter — ny regressionstest med villkorsrad som summerar till 1.2.
+- **Tester:** 14 nya (10 trace-modell + 4 UI). Totalt 131, alla gröna. `tsc` rent, build rent. Browser-verifierat: chance/decision-trace i båda lägen med handkontrollerade värden (u(8)=5.507, EU=2.921, CE=3.454), live-uppdatering, incomplete-fallback. Inga konsolfel.
+
+**Judgment calls:**
+
+1. **Trace är enradig, per vald nod** (inte hela rekursionen på en gång) — barnvärden visas som tal, och användaren kan välja barnet för att se dess egen trace. Matchar promptens exempel och håller det läsbart. Implementerat som fristående `traceNode`-läsare som återanvänder EV/EU/CE i stället för att tråckla en collector genom rekursionen — noll signaturändringar.
+2. **EU-lägets slumpnod-trace visar nyttorummet** ("EU = Σ p·u = … → CE = u⁻¹(…)") — det är den ärliga aritmetiken och själva den pedagogiska poängen med EU (transformera → väntevärde → tillbaka). Beslutsnoder visar CE per gren (monotont ekvivalent med max EU, men läsbart i pengar).
+3. **Många barn: radbrytning, inte trunkering** (`word-break`) — hellre en lång men komplett/ärlig aritmetik än en avkortad. Trace-baren wrappar.
+4. **Avrundning till ~4 signifikanta siffror** via samma `toPrecision(4)`-logik som resten av appen — konsekvent, och tar bort `4.19999…`-brus.
+
+**MVP-status — KOMPLETT.** Alla fyra MVP-prioriteringspunkter är ✅: (1) modellrefaktor, (2) VOC, (3) EU, (4) pedagogiska tillägg. Kärn-MVP:n (trädvisualisering + EV + EU + VOC + pedagogisk polish) är byggd enligt ursprunglig scope.
+
+**Fortfarande ❌ — allt explicit utanför MVP från start** (egna framtida segment): VOI för imperfekt information, känslighetsanalys, flerdimensionella värdefunktioner, relevansdiagram, risk & förmåga-modul, beslutsanalyscykel-vy, real optioner, undo/redo, PNG-export, save/load-UI, samt speglad högerträds-layout i split-läge (⚠️ i SPEC).
+
+---
+
 ## 2026-07-27 (segment 7) — Expected Utility (EU/CE) med γ-elicitering
 
 **Vad hände:** Byggde EU som alternativt beräkningsläge vid sidan av EV. Ursprungspromptens fyra u-funktionstyper reviderades mitt i segmentet till kursmaterialets två (linjär + exponentiell CARA), med γ-elicitering som den pedagogiskt centrala biten.
