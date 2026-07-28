@@ -1,14 +1,21 @@
 import type { NodeType, Outcome } from '../model/tree'
 import {
-  addOutcome,
   branchLabel,
   detachChild,
-  removeOutcome,
-  renameOutcome,
+  displayName,
   setChild,
   TreeNode,
 } from '../model/tree'
 import type { ConditionalRow } from '../model/tree'
+import {
+  addOutcomeToGroup,
+  createLinkedNode,
+  groupSiblings,
+  removeOutcomeFromGroup,
+  renameOutcomeInGroup,
+  renameVariable,
+  unlinkNode,
+} from '../model/variable'
 import { backwardFill } from '../model/backwardFill'
 import { reverseTreeWithBayes } from '../model/bayesReversal'
 import { certaintyEquivalent } from '../model/expectedUtility'
@@ -48,6 +55,7 @@ export interface AppApi {
   attachChild(node: TreeNode, edge: Outcome, type: NodeType, label: string): TreeNode
   toggleType(node: TreeNode): void
   renameNode(node: TreeNode, label: string): void
+  unlinkVariable(node: TreeNode): void
   renameOutcomeOn(node: TreeNode, edge: Outcome, newLabel: string): void
   removeOutcomeFrom(node: TreeNode, edge: Outcome): void
   setProbability(edge: Outcome, probability: number): void
@@ -334,15 +342,23 @@ export function createApp(
     },
 
     addOutcomeTo(node, label, probability = NaN, value?) {
-      const edge = addOutcome(node, label, probability, value)
+      const edge = state.root
+        ? addOutcomeToGroup(state.root, node, label, probability, value)
+        : addOutcomeToGroup(node, node, label, probability, value)
       render()
       return edge
     },
 
     attachChild(node, edge, type, label) {
-      const child = new TreeNode(nextId(), type, label)
+      const child = createLinkedNode(state.root, nextId(), type, label)
       setChild(node, edge, child)
       state.selected = child
+      if (child.instanceIndex > 0) {
+        setMessage(
+          `Länkad till variabeln "${child.label}" — utfall synkas automatiskt ` +
+            `mellan alla instanser (visas som "${displayName(child)}").`,
+        )
+      }
       render()
       return child
     },
@@ -353,18 +369,27 @@ export function createApp(
     },
 
     renameNode(node, label) {
-      node.label = label
+      if (!state.root) return
+      // Renaming propagates to the whole variable group (locked decision A).
+      renameVariable(state.root, node, label)
+      render()
+    },
+
+    unlinkVariable(node) {
+      if (!state.root) return
+      unlinkNode(state.root, node)
+      setMessage(`"${displayName(node)}" är nu frikopplad — egen variabel, synkas inte längre.`)
       render()
     },
 
     renameOutcomeOn(node, edge, newLabel) {
       if (!state.root) return
-      renameOutcome(state.root, node, edge, newLabel)
+      renameOutcomeInGroup(state.root, node, edge, newLabel)
       render()
     },
 
     removeOutcomeFrom(node, edge) {
-      removeOutcome(node, edge)
+      if (state.root) removeOutcomeFromGroup(state.root, node, edge)
       render()
     },
 
@@ -401,7 +426,7 @@ export function createApp(
         (s) => `${s.edge.label}: ${fmt(s.oldProbability)} → ${fmt(s.newProbability)}`,
       )
       setMessage(
-        `Justerade P(${result.node.label} → ${result.edge.label}): ` +
+        `Justerade P(${displayName(result.node)} → ${result.edge.label}): ` +
           `${fmt(result.oldProbability)} → ${fmt(result.newProbability)}` +
           (parts.length > 0 ? ` · syskon omskalade: ${parts.join(', ')}` : ''),
       )
@@ -466,10 +491,18 @@ export function createApp(
     menu.style.left = `${x - rect.left}px`
     menu.style.top = `${y - rect.top}px`
 
+    const linked = state.root ? groupSiblings(state.root, node).length > 0 : false
+
     menu.append(
-      menuItem('✎ Byt namn', () => openNameDialog('Nodens namn', node.label, (v) =>
-        guarded(() => api.renameNode(node, v)),
-      )),
+      menuItem(
+        linked ? '✎ Byt namn på variabeln' : '✎ Byt namn',
+        () =>
+          openNameDialog(
+            linked ? 'Variabelns namn (påverkar alla instanser)' : 'Nodens namn',
+            node.label,
+            (v) => guarded(() => api.renameNode(node, v)),
+          ),
+      ),
       menuItem('☰ Redigera utfall', () => openOutcomesDialog(node)),
       menuItem(
         node.nodeType === 'chance' ? '⇄ Gör till beslutsnod' : '⇄ Gör till slumpnod',
@@ -479,11 +512,16 @@ export function createApp(
     if (node.nodeType === 'chance') {
       menu.append(menuItem('⊞ Villkorstabell', () => openConditionalDialog(node)))
     }
+    if (linked) {
+      menu.append(
+        menuItem('⛓ Koppla loss från variabeln', () => guarded(() => api.unlinkVariable(node))),
+      )
+    }
     menu.append(
       menuItem('✕ Ta bort nod', () => {
         const inc = incomingEdge(node)
         const what = inc
-          ? `"${node.label}" och hela dess delträd tas bort — utfallet "${inc.edge.label}" blir en slutpunkt igen`
+          ? `"${displayName(node)}" och hela dess delträd tas bort — utfallet "${inc.edge.label}" blir en slutpunkt igen`
           : `Hela trädet tas bort`
         if (confirmFn(`${what}. Fortsätt?`)) guarded(() => api.deleteNode(node))
       }),
@@ -612,7 +650,18 @@ export function createApp(
    * nodes), explicit Normalisera button — never silent normalization. */
   const openOutcomesDialog = (node: TreeNode): void => {
     const isChance = node.nodeType === 'chance'
-    const { body, footer } = openDialog(`Utfall — ${node.label}`)
+    const { body, footer } = openDialog(`Utfall — ${displayName(node)}`)
+
+    // Warn that outcome edits propagate to the variable's other instances.
+    const siblings = state.root ? groupSiblings(state.root, node) : []
+    if (siblings.length > 0) {
+      const note = document.createElement('p')
+      note.className = 'sync-note'
+      note.textContent =
+        `Detta påverkar även: ${siblings.map((n) => displayName(n)).join(', ')} ` +
+        `(utfallsuppsättningen synkas; sannolikheter är egna per instans).`
+      body.appendChild(note)
+    }
 
     interface Row {
       edge: Outcome | null
@@ -723,19 +772,23 @@ export function createApp(
               throw new Error('Utfallsetiketter måste vara unika inom noden')
             }
 
+            // All edits route through the group-aware model functions so the
+            // outcome set stays synced across every linked instance (labels
+            // only — probabilities remain per-instance).
+            const root = state.root ?? node
             for (const r of rows) {
-              if (r.removed && r.edge) removeOutcome(node, r.edge)
+              if (r.removed && r.edge) removeOutcomeFromGroup(root, node, r.edge)
             }
             for (const r of active) {
               const label = r.labelInput.value.trim()
               const prob = r.probInput ? parseNum(r.probInput.value) : NaN
               if (r.edge) {
-                if (r.edge.label !== label && state.root) {
-                  renameOutcome(state.root, node, r.edge, label)
+                if (r.edge.label !== label) {
+                  renameOutcomeInGroup(root, node, r.edge, label)
                 }
                 r.edge.probability = prob
               } else {
-                addOutcome(node, label, prob)
+                addOutcomeToGroup(root, node, label, prob)
               }
             }
             closeDialog()
@@ -749,7 +802,7 @@ export function createApp(
   /** Legacy-style conditional matrix: rows = conditions, columns = the
    * node's outcomes. The base row edits the outcomes' base probabilities. */
   const openConditionalDialog = (node: TreeNode): void => {
-    const { body, footer } = openDialog(`Villkorstabell — ${node.label}`)
+    const { body, footer } = openDialog(`Villkorstabell — ${displayName(node)}`)
     const outcomeLabels = node.outcomes.map((o) => o.label)
     if (outcomeLabels.length === 0) {
       body.textContent = 'Noden har inga utfall än — lägg till utfall först.'
@@ -878,7 +931,7 @@ export function createApp(
   /** Terminal-outcome dialog: payoff + target joint probability (changed
    * fields only, like legacy), plus attaching a child node to grow the tree. */
   const openTerminalDialog = (node: TreeNode, edge: Outcome): void => {
-    const { body, footer } = openDialog(`${node.label} → ${edge.label}`)
+    const { body, footer } = openDialog(`${displayName(node)} → ${edge.label}`)
 
     const valueInput = textInput(edge.value !== undefined ? String(edge.value) : '')
     valueInput.placeholder = 'osatt'
@@ -1220,7 +1273,7 @@ export function createApp(
     }
     const node = state.selected
     const trace = traceNode(node, historyFor(node), state.displayMode, state.utilityFn)
-    traceBar.textContent = `Beräkning (${node.label}): ${trace.text}`
+    traceBar.textContent = `Beräkning (${displayName(node)}): ${trace.text}`
     traceBar.style.display = ''
   }
 

@@ -401,6 +401,113 @@ describe('createApp', () => {
     expect(midWarning()).toBe('Σ = 1.2 ⚠')
   })
 
+  it('auto-links a same-named node, primes its display, and reports the link', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    const no = app.api.addOutcomeTo(root, 'No')
+    const first = app.api.attachChild(root, yes, 'chance', 'Väder')
+    app.api.addOutcomeTo(first, 'Regn', 0.3, 8)
+    app.api.addOutcomeTo(first, 'Sol', 0.7, 2)
+
+    const second = app.api.attachChild(root, no, 'chance', 'Väder')
+    expect(second.variableId).toBe(first.variableId)
+    expect(second.instanceIndex).toBe(1)
+    // Outcome set synced (labels), probabilities unset on the new instance.
+    expect(second.outcomes.map((o) => o.label)).toEqual(['Regn', 'Sol'])
+    // The tree shows the primed display name.
+    const labels = [...container.querySelectorAll('.node-label')].map((n) => n.textContent)
+    expect(labels).toContain("Väder'")
+    // The user is told about the link.
+    expect((container.querySelector('.message-strip') as HTMLElement).textContent).toContain(
+      'Länkad till variabeln',
+    )
+  })
+
+  it('rejects a type-mismatched link with a clear message, no crash', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    const no = app.api.addOutcomeTo(root, 'No')
+    app.api.attachChild(root, yes, 'chance', 'Väder')
+
+    // Trying to make a decision node named "Väder" conflicts with the chance one.
+    // The menu path wraps in guarded(); simulate the guarded call:
+    let caught = ''
+    try {
+      app.api.attachChild(root, no, 'decision', 'Väder')
+    } catch (e) {
+      caught = (e as Error).message
+    }
+    expect(caught).toContain('måste ha samma typ')
+    // Tree still intact (no half-applied state).
+    expect(container.querySelector('[data-node-id]')).not.toBeNull()
+  })
+
+  it('outcome edit on one instance propagates to the linked sibling', () => {
+    const { app } = newApp()
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    const no = app.api.addOutcomeTo(root, 'No')
+    const a = app.api.attachChild(root, yes, 'chance', 'Väder')
+    const b = app.api.attachChild(root, no, 'chance', 'Väder')
+
+    app.api.addOutcomeTo(a, 'Regn', 0.3, 8)
+    // Propagated to b (label only).
+    expect(b.outcomes.map((o) => o.label)).toEqual(['Regn'])
+    expect(Number.isNaN(b.outcomes[0].probability)).toBe(true)
+
+    // Renaming the outcome propagates too.
+    app.api.renameOutcomeOn(a, a.outcomes[0], 'Nederbörd')
+    expect(b.outcomes.map((o) => o.label)).toEqual(['Nederbörd'])
+  })
+
+  it('renaming a linked node renames the whole variable; unlink detaches it', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    const no = app.api.addOutcomeTo(root, 'No')
+    const a = app.api.attachChild(root, yes, 'chance', 'Väder')
+    const b = app.api.attachChild(root, no, 'chance', 'Väder')
+
+    app.api.renameNode(a, 'Klimat')
+    expect(a.label).toBe('Klimat')
+    expect(b.label).toBe('Klimat') // propagated
+
+    app.api.unlinkVariable(b)
+    expect(b.variableId).toBe(b.id)
+    expect(b.instanceIndex).toBe(0)
+    // After unlink, edits to a no longer reach b.
+    app.api.addOutcomeTo(a, 'X')
+    expect(a.outcomes.some((o) => o.label === 'X')).toBe(true)
+    expect(b.outcomes.some((o) => o.label === 'X')).toBe(false)
+    expect((container.querySelector('.message-strip') as HTMLElement).textContent).toContain(
+      'frikopplad',
+    )
+  })
+
+  it('the outcomes dialog shows which other instances an edit affects', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    const no = app.api.addOutcomeTo(root, 'No')
+    const a = app.api.attachChild(root, yes, 'chance', 'Väder')
+    app.api.attachChild(root, no, 'chance', 'Väder')
+
+    // Open the outcomes dialog on the primary via its context menu.
+    app.api.selectNode(a)
+    container
+      .querySelector('[data-node-id="' + a.id + '"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    ;[...container.querySelectorAll('.menu-item')]
+      .find((b) => b.textContent!.includes('Redigera utfall'))!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    const note = container.querySelector('.sync-note')
+    expect(note).not.toBeNull()
+    expect(note!.textContent).toContain("Väder'")
+  })
+
   it('"Lägg till nod" opens the create-root dialog only for an empty tree', () => {
     const { app, container } = newApp()
     const btn = container.querySelector('#add-node') as HTMLButtonElement
