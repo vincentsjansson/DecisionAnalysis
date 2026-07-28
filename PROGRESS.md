@@ -4,6 +4,16 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-07-28 (segment 12) — Konsolidera deploy till bara `main`
+
+**Vad hände:** Live-länken serverade ett gammalt bygge eftersom deploy-workflowet bara triggade på `main` medan segment 9–11 låg okmergade på `rebuild-typescript`. En tillfällig fix la till `rebuild-typescript` som andra deploy-källa (både i workflow-triggern och i `github-pages`-miljöns branch-policy). Det gav två parallella deploy-källor till samma URL — inte önskvärt permanent.
+
+**Åtgärd:** `main` görs till enda sanning för både kod och deploy. `rebuild-typescript` mergas till `main` (segment 9–11 + docs), deploy-triggern återställs till `branches: [main]`, och `rebuild-typescript` tas bort ur `github-pages`-miljöns tillåtna branches. Efter detta deployar bara push till `main`. README:s deploy-sektion uppdaterad därefter.
+
+**Branch-städning:** `cleanup` raderad (0 commits ahead av main, redundant). `feature/child-based` **lämnad orörd** — innehåller gammal C#/WPF-referenskod (VOC-display, flip-layout, save/load) som kan vara värdefull referens för ett kommande segment (riktig visuell speglingslayout i split-läge).
+
+---
+
 ## 2026-07-28 (segment 11) — Spara/ladda-UI (JSON-filer)
 
 **Vad hände:** Kopplade den befintliga (sedan segment 3 testade) serialiseringen till fil-I/O och UI.

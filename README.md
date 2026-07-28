@@ -3,15 +3,14 @@
 A decision analysis tool for building, visualizing, and evaluating
 decision trees — EV, conditional probabilities, and Value of
 Clairvoyance. Built as a teaching aid for an introductory course in
-risk, safety, and crisis management.
+Decision Analysis.
 
 ## Testa live
 
 👉 **https://vincentsjansson.github.io/DecisionAnalysis/**
 
 Den senaste versionen deployas automatiskt hit vid varje push till
-`rebuild-typescript` (och `main`). Öppna länken i valfri webbläsare —
-inget installationssteg behövs.
+`main`. Öppna länken i valfri webbläsare — inget installationssteg behövs.
 
 ## Architecture
 
@@ -45,6 +44,8 @@ npm run build     # production build to dist/
 
 ## Deployment
 
-Every push to `main` or `rebuild-typescript` builds the app and deploys
-`dist/` to GitHub Pages via `.github/workflows/deploy.yml`, served at the
-[live link](https://vincentsjansson.github.io/DecisionAnalysis/) above.
+`main` is the single source of truth. Every push to `main` builds the app
+and deploys `dist/` to GitHub Pages via `.github/workflows/deploy.yml`,
+served at the [live link](https://vincentsjansson.github.io/DecisionAnalysis/)
+above. Feature work happens on branches and reaches the live site by
+merging to `main`.
