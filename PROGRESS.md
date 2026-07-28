@@ -4,6 +4,23 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-07-28 (segment 10) — Auto-fill av länkade instanser (korrigering från live-test)
+
+**Vad hände:** Live-test (screenshot) visade en lucka: en slumpnod "test" med utfall 1/2/3/4 där man la "Hej" under "1" fick INTE automatiskt Hej'/Hej''/Hej''' under 2/3/4 — länkning skedde bara om man manuellt skapade varje nod med matchande namn. Detta segment gör länkningen proaktiv och omedelbar vid nodskapande.
+
+- **Modell:** `autoFillLinkedSiblings(root, parent, template, nextId)` i `variable.ts` — återanvänder `createLinkedNode` för att fylla varje fortfarande *terminalt* syskon-utfall under `parent` med en länkad instans av det nyss skapade barnet (delad `variableId`, synkad utfallsuppsättning + nodtyp, egna sannolikheter). Fires en gång per skapande, en nivå djupt (varje ny instans är barnlös → ingen kaskad). Icke-terminala syskon (redan byggd eller frikopplad struktur) lämnas orörda.
+- **UI:** `attachChild` kallar auto-fill efter att barnet kopplats — men **bara när föräldern är en slumpnod**. Meddelanderaden listar de skapade instanserna.
+- **Tester:** 10 nya (screenshot-scenariot, ingen överskrivning av befintlig struktur, respekterar tidigare unlink, unlink-en-påverkar-inte-andra, flip behandlar auto-fyllda instanser som en variabel, chance-only-grinden). Totalt 159, alla gröna. `tsc` + build rena. Browser-verifierat: screenshot-scenariot ger nu Hej/Hej'/Hej''/Hej''' automatiskt, och utfall som läggs till på en instans synkas till alla fyra. Inga konsolfel.
+
+**Judgment call (frågade användaren — genuint tvetydigt):**
+
+- **Auto-fill gäller bara slumpnoder, inte beslutsnoder.** Specen sa "any outcome of a parent", men bokstavligt tillämpat på beslutsnoder skulle det bryta asymmetriska beslutsträd — det klassiska klarsyns-/VOC-exemplet som verktyget självt räknar på är asymmetriskt ("Satsa? Ja→chansning, Nej→säker payoff"). Att auto-fylla Nej med en länkad chansnod skulle tvinga användaren att radera den. Frågade och användaren bekräftade slumpnoder-bara. Manuell namn-länkning under beslutsgrenar fungerar fortfarande om man vill ha symmetri.
+- **Terminal-vakten `if (edge.child) continue`** hanterar både "redan byggd struktur" och "tidigare frikopplad instans" (en frikopplad instans har fortfarande ett barn → icke-terminal → hoppas över), så ingen extra logik behövdes för att respektera unlinks.
+
+**Status:** MVP oförändrat komplett. Save/load-UI återstår som nästa segment (påbörjades men pausades för denna korrigering). Övrigt utanför MVP oförändrat.
+
+---
+
 ## 2026-07-28 (segment 9) — Länkade variabelinstanser
 
 **Vad hände:** Gjorde "samma variabel på flera grenar" till ett förstklassigt begrepp (`variableId`) istället för en implicit namnjämförelse, och stärkte flip/VOC-valideringen med det.
