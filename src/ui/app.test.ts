@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
+import type { TreeNode } from '../model/tree'
 import { createApp } from './app'
 
 function newApp(confirmAnswer = true) {
@@ -574,6 +575,95 @@ describe('createApp', () => {
     app.api.addOutcomeTo(hej, 'z')
     expect(under2.outcomes.some((o) => o.label === 'z')).toBe(false)
     expect(test.outcomes[2].child!.outcomes.some((o) => o.label === 'z')).toBe(true)
+  })
+
+  it('save/load round-trips the tree and settings through the app', () => {
+    const { app } = newApp()
+    const test = app.api.createRoot('chance', 'Väder')
+    app.api.addOutcomeTo(test, 'Regn', 0.3, 8)
+    app.api.addOutcomeTo(test, 'Sol', 0.7, 2)
+    app.api.setDisplayMode('eu')
+    app.api.setUtilityParameter(0.2)
+
+    const json = app.api.exportDocument()
+    expect(app.state.dirty).toBe(false) // saving clears dirty
+
+    // Load into a fresh app instance (clean state).
+    const fresh = newApp().app
+    expect(fresh.api.loadDocument(json)).toBe(true)
+    expect(fresh.state.root!.label).toBe('Väder')
+    expect(fresh.state.root!.outcomes.map((o) => o.value)).toEqual([8, 2])
+    expect(fresh.state.displayMode).toBe('eu')
+    expect(fresh.state.utilityFn).toEqual({ type: 'exponential', parameter: 0.2 })
+    expect(fresh.state.dirty).toBe(false)
+  })
+
+  it('round-trips linked variables + conditional tables + EU through save/load', () => {
+    const { app } = newApp()
+    const test = app.api.createRoot('chance', 'test')
+    const e1 = app.api.addOutcomeTo(test, '1', 0.5)
+    app.api.addOutcomeTo(test, '2', 0.5)
+    const hej = app.api.attachChild(test, e1, 'chance', 'Hej') // auto-fills Hej' under "2"
+    app.api.addOutcomeTo(hej, 'a', 0.6, 3)
+    app.api.addOutcomeTo(hej, 'b', 0.4, 1)
+    app.api.setConditionalTable(hej, [
+      { condition: new Set([`${test.id}:1`]), probabilities: { a: 0.9, b: 0.1 } },
+    ])
+    app.api.setDisplayMode('eu')
+
+    const restored = newApp().app
+    restored.api.loadDocument(app.api.exportDocument())
+
+    const nodes: TreeNode[] = []
+    const walk = (n: TreeNode) => {
+      nodes.push(n)
+      for (const o of n.outcomes) if (o.child) walk(o.child)
+    }
+    walk(restored.state.root!)
+    const hejGroup = nodes.filter((n) => n.label === 'Hej')
+    expect(hejGroup).toHaveLength(2)
+    expect(new Set(hejGroup.map((n) => n.variableId)).size).toBe(1) // still one group
+    const primary = hejGroup.find((n) => n.instanceIndex === 0)!
+    expect(primary.conditionalTable[0].probabilities).toEqual({ a: 0.9, b: 0.1 })
+  })
+
+  it('rejects a malformed file with a clear error, without loading', () => {
+    const { app } = newApp()
+    app.api.createRoot('chance', 'Original')
+    const before = app.state.root
+
+    let err = ''
+    try {
+      app.api.loadDocument('{ not valid json', { skipConfirm: true })
+    } catch (e) {
+      err = (e as Error).message
+    }
+    expect(err).toMatch(/giltig JSON/)
+    // Tree untouched.
+    expect(app.state.root).toBe(before)
+  })
+
+  it('confirms before discarding unsaved changes on load', () => {
+    // confirmFn returns false -> load is cancelled.
+    const container = document.createElement('div')
+    const app = createApp(container, { confirmFn: () => false })
+    app.api.createRoot('chance', 'Kladd') // makes state dirty
+    expect(app.state.dirty).toBe(true)
+
+    const otherDoc = (() => {
+      const c2 = document.createElement('div')
+      const a2 = createApp(c2, { confirmFn: () => true })
+      a2.api.createRoot('decision', 'Annat')
+      return a2.api.exportDocument()
+    })()
+
+    // Dirty + confirm=false -> loadDocument returns false, keeps current tree.
+    expect(app.api.loadDocument(otherDoc)).toBe(false)
+    expect(app.state.root!.label).toBe('Kladd')
+
+    // skipConfirm bypasses the prompt.
+    expect(app.api.loadDocument(otherDoc, { skipConfirm: true })).toBe(true)
+    expect(app.state.root!.label).toBe('Annat')
   })
 
   it('"Lägg till nod" opens the create-root dialog only for an empty tree', () => {

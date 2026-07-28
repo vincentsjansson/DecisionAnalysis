@@ -19,6 +19,7 @@ import {
 } from '../model/variable'
 import { backwardFill } from '../model/backwardFill'
 import { reverseTreeWithBayes } from '../model/bayesReversal'
+import { deserializeDocument, documentFilename, documentToJson } from '../model/document'
 import { certaintyEquivalent } from '../model/expectedUtility'
 import { traceNode, traceTerminalUtility } from '../model/calculationTrace'
 import {
@@ -48,6 +49,9 @@ export interface AppState {
   view: ViewTransform
   viewRight: ViewTransform
   idCounter: number
+  /** True when the tree/settings changed since the last save or load — used
+   * to confirm before a load would discard unsaved work. */
+  dirty: boolean
 }
 
 export interface AppApi {
@@ -64,6 +68,8 @@ export interface AppApi {
   setConditionalTable(node: TreeNode, rows: ConditionalRow[]): void
   deleteNode(node: TreeNode): void
   applyBackwardFill(node: TreeNode, edge: Outcome, targetProbability: number): void
+  exportDocument(): string
+  loadDocument(text: string, opts?: { skipConfirm?: boolean }): boolean
   toggleSplit(): void
   setDisplayMode(mode: DisplayMode): void
   setUtilityType(type: UtilityType): void
@@ -97,6 +103,7 @@ export function createApp(
     view: { scale: 1, x: 0, y: 0 },
     viewRight: { scale: 1, x: 0, y: 0 },
     idCounter: 0,
+    dirty: false,
   }
 
   // ── Static shell (built once — listeners never accumulate) ──
@@ -116,7 +123,17 @@ export function createApp(
   flipBtn.textContent = '⇄ Flip'
   const modeBtn = document.createElement('button')
   modeBtn.id = 'mode-toggle'
-  topbar.append(title, addBtn, flipBtn, modeBtn)
+  const saveBtn = document.createElement('button')
+  saveBtn.id = 'save'
+  saveBtn.textContent = '💾 Spara'
+  const loadBtn = document.createElement('button')
+  loadBtn.id = 'load'
+  loadBtn.textContent = '📂 Ladda'
+  const fileInput = document.createElement('input')
+  fileInput.type = 'file'
+  fileInput.accept = 'application/json,.json'
+  fileInput.style.display = 'none'
+  topbar.append(title, addBtn, flipBtn, modeBtn, saveBtn, loadBtn, fileInput)
 
   const messageStrip = document.createElement('div')
   messageStrip.className = 'message-strip'
@@ -271,6 +288,10 @@ export function createApp(
     messageStrip.style.display = text ? '' : 'none'
   }
 
+  const markDirty = (): void => {
+    state.dirty = true
+  }
+
   const guarded = (fn: () => void): void => {
     try {
       fn()
@@ -338,6 +359,7 @@ export function createApp(
       state.root = node
       state.selected = node
       setMessage('')
+      markDirty()
       render()
       return node
     },
@@ -346,6 +368,7 @@ export function createApp(
       const edge = state.root
         ? addOutcomeToGroup(state.root, node, label, probability, value)
         : addOutcomeToGroup(node, node, label, probability, value)
+      markDirty()
       render()
       return edge
     },
@@ -354,6 +377,7 @@ export function createApp(
       const child = createLinkedNode(state.root, nextId(), type, label)
       setChild(node, edge, child)
       state.selected = child
+      markDirty()
       // Proactively grow the same variable across the parent's other terminal
       // outcomes, so the user doesn't repeat the setup on every branch. Only
       // under chance parents — a chance variable recurs across its contexts;
@@ -381,6 +405,7 @@ export function createApp(
 
     toggleType(node) {
       node.nodeType = node.nodeType === 'chance' ? 'decision' : 'chance'
+      markDirty()
       render()
     },
 
@@ -388,6 +413,7 @@ export function createApp(
       if (!state.root) return
       // Renaming propagates to the whole variable group (locked decision A).
       renameVariable(state.root, node, label)
+      markDirty()
       render()
     },
 
@@ -395,32 +421,38 @@ export function createApp(
       if (!state.root) return
       unlinkNode(state.root, node)
       setMessage(`"${displayName(node)}" är nu frikopplad — egen variabel, synkas inte längre.`)
+      markDirty()
       render()
     },
 
     renameOutcomeOn(node, edge, newLabel) {
       if (!state.root) return
       renameOutcomeInGroup(state.root, node, edge, newLabel)
+      markDirty()
       render()
     },
 
     removeOutcomeFrom(node, edge) {
       if (state.root) removeOutcomeFromGroup(state.root, node, edge)
+      markDirty()
       render()
     },
 
     setProbability(edge, probability) {
       edge.probability = probability
+      markDirty()
       render()
     },
 
     setValue(edge, value) {
       edge.value = value
+      markDirty()
       render()
     },
 
     setConditionalTable(node, rows) {
       node.conditionalTable = rows
+      markDirty()
       render()
     },
 
@@ -432,6 +464,7 @@ export function createApp(
         detachChild(inc.edge)
       }
       if (state.selected === node) state.selected = null
+      markDirty()
       render()
     },
 
@@ -446,7 +479,38 @@ export function createApp(
           `${fmt(result.oldProbability)} → ${fmt(result.newProbability)}` +
           (parts.length > 0 ? ` · syskon omskalade: ${parts.join(', ')}` : ''),
       )
+      markDirty()
       render()
+    },
+
+    exportDocument() {
+      const json = documentToJson({
+        tree: state.root,
+        displayMode: state.displayMode,
+        utility: state.utilityFn,
+        idCounter: state.idCounter,
+      })
+      state.dirty = false // a successful save clears the unsaved-changes flag
+      return json
+    },
+
+    loadDocument(text, opts) {
+      // Validate first, so a broken file never triggers a discard prompt.
+      const doc = deserializeDocument(text)
+      if (!opts?.skipConfirm && state.root && state.dirty) {
+        if (!confirmFn('Osparade ändringar går förlorade om du laddar en fil. Fortsätt?')) {
+          return false
+        }
+      }
+      state.root = doc.tree
+      state.displayMode = doc.displayMode
+      state.utilityFn = doc.utility
+      state.idCounter = doc.idCounter
+      state.selected = null
+      state.split = false
+      state.dirty = false
+      render()
+      return true
     },
 
     toggleSplit() {
@@ -459,6 +523,7 @@ export function createApp(
 
     setDisplayMode(mode) {
       state.displayMode = mode
+      markDirty()
       render()
     },
 
@@ -466,11 +531,13 @@ export function createApp(
       // Switching type resets the parameter to that type's sensible default;
       // the user can fine-tune afterward.
       state.utilityFn = defaultUtilityFunction(type)
+      markDirty()
       render()
     },
 
     setUtilityParameter(parameter) {
       state.utilityFn = { ...state.utilityFn, parameter }
+      markDirty()
       render()
     },
 
@@ -807,6 +874,7 @@ export function createApp(
                 addOutcomeToGroup(root, node, label, prob)
               }
             }
+            markDirty()
             closeDialog()
             render()
           }),
@@ -1051,6 +1119,42 @@ export function createApp(
     api.toggleSplit()
   })
 
+  // ── Save / load ──
+  saveBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    const json = api.exportDocument()
+    const blob = new Blob([json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = documentFilename(state.root)
+    a.click()
+    URL.revokeObjectURL(url)
+    setMessage(`Sparat som ${a.download}.`)
+  })
+
+  loadBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    fileInput.click()
+  })
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0]
+    if (!file) return
+    void file
+      .text()
+      .then((text) => {
+        fileInput.value = '' // let the same file be picked again later
+        guarded(() => {
+          if (api.loadDocument(text)) setMessage(`Laddade ${file.name}.`)
+        })
+      })
+      .catch(() => {
+        fileInput.value = ''
+        setMessage('Kunde inte läsa filen.')
+      })
+  })
+
   // ── Display-mode toggle + utility config wiring ──
   modeBtn.addEventListener('click', (e) => {
     e.stopPropagation()
@@ -1167,6 +1271,7 @@ export function createApp(
             }
             // Elicitation always produces an exponential utility.
             state.utilityFn = { type: 'exponential', parameter: computedGamma }
+            markDirty()
             closeDialog()
             render()
           }),
