@@ -85,7 +85,8 @@ Dessa är redan förhindrade av TS-modellens grundarkitektur (ett villkorsformat
 
 ## Spara / ladda
 
-- ⚠️ Serialisering/deserialisering (`src/model/serialization.ts`) är klar och round-trip-testad, snake_case-fältnamn (`conditional_tables`) enligt regeln ovan. Osatt sannolikhet (NaN) och osatt payoff mappas **explicit** till `null` och tillbaka — inte via JSON.stringifys tysta NaN→null. **Fortfarande ❌:** ingen fil-I/O eller UI (spara-till-fil / ladda-från-fil-knappar).
+- ✅ Serialisering/deserialisering (`src/model/serialization.ts`) round-trip-testad, snake_case-fältnamn (`conditional_tables`). Osatt sannolikhet (NaN) och osatt payoff mappas **explicit** till `null` och tillbaka.
+- ✅ Spara/ladda-UI (`src/model/document.ts` + app.ts): 💾 Spara laddar ner ett dokument (`{ tree, displayMode, utility, idCounter }`, JSON, Blob-nedladdning, filnamn = rotnamn + datum); 📂 Ladda öppnar filväljare, validerar + applicerar + ritar om. Round-trip exakt inkl. länkade variabelgrupper (`variableId`/`instanceIndex`), villkorstabeller och EV/EU-inställningar. Validering är fail-loud (ogiltig JSON, okänt/saknat format, felaktig display_mode/utility/nodform, trasig variabelgrupp) — laddar aldrig ett partiellt/trasigt träd. Dirty-flagga + bekräftelse innan en laddning skriver över osparade ändringar. Split-läge sparar bara originalträdet (det omvända är alltid härlett).
 - Path-keyed datastrukturer för delade Outcome-objekt över flera paths: **inte en risk idag** (trädet är strikt ett träd, ingen delning), men bli explicit designkrav om delning införs senare.
 
 ## Undo/redo

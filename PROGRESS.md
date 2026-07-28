@@ -4,6 +4,25 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-07-28 (segment 11) — Spara/ladda-UI (JSON-filer)
+
+**Vad hände:** Kopplade den befintliga (sedan segment 3 testade) serialiseringen till fil-I/O och UI.
+
+- **`src/model/document.ts`:** ett dokument-omslag runt trädserialiseringen — `{ tree, displayMode, utility, idCounter }` — så en sparfil också fångar EV/EU-läge, nyttofunktionsinställningar och id-räknaren (höjs över högsta befintliga id vid laddning så nya noder inte kolliderar). `deserializeDocument` validerar fail-loud med specifika meddelanden (ogiltig JSON, saknat/okänt format, felaktig display_mode/utility, felaktig nodform, **trasig variabelgrupp** = samma variableId med olika namn/typ) — laddar aldrig ett partiellt/reparerat träd. `documentFilename` härleder ett säkert namn ur rotetiketten + datum.
+- **UI:** 💾 Spara laddar ner dokumentet (Blob + `<a download>`); 📂 Ladda öppnar filväljare, läser + validerar + applicerar och ritar om allt (träd, EV/EU, variabelgrupper). Dirty-flagga (sätts vid varje mutation, nollställs vid spara/ladda) driver en bekräftelse innan en laddning kastar osparat arbete.
+- **Tester:** 18 nya (round-trip enkel + komplex med länkade variabler/villkor/EU, idCounter-höjning, tomt dokument, sex malformerade-fall, filnamn, samt UI-spara/ladda/bekräfta-flödet). Totalt 177, alla gröna. `tsc` + build rena. Browser-verifierat end-to-end: bygg → spara ("Sparat som väder-2026-07-28.json") → ladda ett dokument återställer träd + EV/EU/CE-visning exakt (Marknad, CE 2.481 vid γ=0.15, handkontrollerat); malformerade filer ger specifika fel och lämnar trädet orört. Inga konsolfel.
+
+**Judgment calls:**
+
+1. **Sparformatet är appens eget dokument** (med `format`-tagg + version). Blott-träd-filer från annat håll avvisas med tydligt meddelande snarare än att tyst laddas — förutsägbart och matchar fail-loud-principen.
+2. **Split-läge sparar bara originalträdet** — det omvända (klarsyns-)trädet är alltid härlett/omräkningsbart, så det behöver inte persisteras; laddning återgår till enkelvy.
+3. **Osparade ändringar = dirty-flagga + confirm**, inte en beständig "osparat"-indikator. Enklare och räcker för segmentet (prompten tillät att skjuta upp en mer polerad indikator). `idCounter` persisteras + höjs defensivt över högsta `n<siffra>`-id vid laddning.
+4. **Nyttoinställningar round-trip-as** (displayMode + utility) eftersom de påverkar de visade värdena — annars skulle en laddad EU-fil visa fel siffror.
+
+**MVP-status:** oförändrat komplett. Save/load låg utanför MVP men var efterfrågat; nu klart. Fortfarande ❌ (utanför scope): VOI för imperfekt information, känslighetsanalys, flerdimensionella värdefunktioner, relevansdiagram, risk & förmåga, undo/redo, PNG-export, speglad högerträds-layout.
+
+---
+
 ## 2026-07-28 (segment 10) — Auto-fill av länkade instanser (korrigering från live-test)
 
 **Vad hände:** Live-test (screenshot) visade en lucka: en slumpnod "test" med utfall 1/2/3/4 där man la "Hej" under "1" fick INTE automatiskt Hej'/Hej''/Hej''' under 2/3/4 — länkning skedde bara om man manuellt skapade varje nod med matchande namn. Detta segment gör länkningen proaktiv och omedelbar vid nodskapande.
