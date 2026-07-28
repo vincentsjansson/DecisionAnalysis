@@ -5,6 +5,7 @@ import {
   displayName,
   removeOutcome,
   renameOutcome,
+  setChild,
   TreeNode,
 } from './tree'
 
@@ -83,6 +84,34 @@ export function createLinkedNode(
 
 function typeLabel(t: NodeType): string {
   return t === 'chance' ? 'slumpnod' : 'beslutsnod'
+}
+
+/** After a child is attached under one of `parent`'s outcomes, proactively
+ * fills every OTHER still-terminal outcome of the same parent with a linked
+ * instance of that child — so the same variable "grows" across all sibling
+ * branches without the user repeating the setup on each. Each new instance
+ * shares `template`'s variableId (via createLinkedNode's name match), its
+ * outcome SET and node type, but its own probabilities/conditional tables.
+ *
+ * Fires exactly once per creation event and one level deep: it only fills
+ * this parent's immediate terminal siblings (each new instance starts
+ * childless), so it can't cascade or recurse unboundedly. Non-terminal
+ * siblings — already-built or previously-unlinked structure — are left
+ * untouched. Returns the instances created (empty if none). */
+export function autoFillLinkedSiblings(
+  root: TreeNode,
+  parent: TreeNode,
+  template: TreeNode,
+  nextId: () => string,
+): TreeNode[] {
+  const created: TreeNode[] = []
+  for (const edge of parent.outcomes) {
+    if (edge.child) continue // skip the just-attached child and any existing structure
+    const instance = createLinkedNode(root, nextId(), template.nodeType, template.label)
+    setChild(parent, edge, instance)
+    created.push(instance)
+  }
+  return created
 }
 
 /** Adds an outcome to `node` and propagates the same label (probability unset)

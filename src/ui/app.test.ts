@@ -508,6 +508,74 @@ describe('createApp', () => {
     expect(note!.textContent).toContain("Väder'")
   })
 
+  it('auto-fills linked siblings under a chance parent (the screenshot scenario)', () => {
+    const { app, container } = newApp()
+    // Chance "test" with outcomes 1/2/3/4.
+    const test = app.api.createRoot('chance', 'test')
+    const e1 = app.api.addOutcomeTo(test, '1', 0.25)
+    app.api.addOutcomeTo(test, '2', 0.25)
+    app.api.addOutcomeTo(test, '3', 0.25)
+    app.api.addOutcomeTo(test, '4', 0.25)
+
+    // Add "Hej" under outcome "1" only.
+    const hej = app.api.attachChild(test, e1, 'chance', 'Hej')
+
+    // Outcomes 2/3/4 now hold linked Hej instances (no more terminals).
+    const children = test.outcomes.map((o) => o.child)
+    expect(children.every((c) => c !== null)).toBe(true)
+    for (const c of children) {
+      expect(c!.variableId).toBe(hej.variableId)
+      expect(c!.nodeType).toBe('chance')
+      expect(c!.label).toBe('Hej')
+    }
+    // Primed display names appear in the tree.
+    const labels = [...container.querySelectorAll('.node-label')].map((n) => n.textContent)
+    expect(labels).toEqual(expect.arrayContaining(['test', 'Hej', "Hej'", "Hej''", "Hej'''"]))
+    // The user is told several linked instances were created.
+    expect((container.querySelector('.message-strip') as HTMLElement).textContent).toContain(
+      'Länkade instanser skapade under övriga utfall',
+    )
+    // Adding an outcome on Hej propagates to all instances (synced set).
+    app.api.addOutcomeTo(hej, 'x', 0.5, 3)
+    for (const c of children) expect(c!.outcomes.some((o) => o.label === 'x')).toBe(true)
+  })
+
+  it('does NOT auto-fill under a decision parent (asymmetric decisions preserved)', () => {
+    const { app } = newApp()
+    const bet = app.api.createRoot('decision', 'Satsa')
+    const ja = app.api.addOutcomeTo(bet, 'Ja')
+    app.api.addOutcomeTo(bet, 'Nej', NaN, 3) // safe terminal payoff
+
+    app.api.attachChild(bet, ja, 'chance', 'Väder')
+
+    // "Nej" stays a terminal payoff — not auto-filled with a linked chance node.
+    const nej = bet.outcomes.find((o) => o.label === 'Nej')!
+    expect(nej.child).toBeNull()
+    expect(nej.value).toBe(3)
+  })
+
+  it('unlinking an auto-filled instance does not affect the others', () => {
+    const { app } = newApp()
+    const test = app.api.createRoot('chance', 'test')
+    const e1 = app.api.addOutcomeTo(test, '1', 0.25)
+    app.api.addOutcomeTo(test, '2', 0.25)
+    app.api.addOutcomeTo(test, '3', 0.25)
+    app.api.addOutcomeTo(test, '4', 0.25)
+    const hej = app.api.attachChild(test, e1, 'chance', 'Hej')
+
+    const under2 = test.outcomes[1].child! // an auto-filled instance
+    app.api.unlinkVariable(under2)
+
+    expect(under2.variableId).toBe(under2.id) // independent now
+    // The others remain grouped with hej.
+    expect(test.outcomes[2].child!.variableId).toBe(hej.variableId)
+    expect(test.outcomes[3].child!.variableId).toBe(hej.variableId)
+    // And an outcome added on hej no longer reaches the unlinked one.
+    app.api.addOutcomeTo(hej, 'z')
+    expect(under2.outcomes.some((o) => o.label === 'z')).toBe(false)
+    expect(test.outcomes[2].child!.outcomes.some((o) => o.label === 'z')).toBe(true)
+  })
+
   it('"Lägg till nod" opens the create-root dialog only for an empty tree', () => {
     const { app, container } = newApp()
     const btn = container.querySelector('#add-node') as HTMLButtonElement

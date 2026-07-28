@@ -9,6 +9,7 @@ import {
 import type { ConditionalRow } from '../model/tree'
 import {
   addOutcomeToGroup,
+  autoFillLinkedSiblings,
   createLinkedNode,
   groupSiblings,
   removeOutcomeFromGroup,
@@ -353,7 +354,22 @@ export function createApp(
       const child = createLinkedNode(state.root, nextId(), type, label)
       setChild(node, edge, child)
       state.selected = child
-      if (child.instanceIndex > 0) {
+      // Proactively grow the same variable across the parent's other terminal
+      // outcomes, so the user doesn't repeat the setup on every branch. Only
+      // under chance parents — a chance variable recurs across its contexts;
+      // decision alternatives are deliberately asymmetric (act vs. don't act),
+      // so auto-filling them would fight the classic decision-tree shape.
+      const autoFilled =
+        state.root && node.nodeType === 'chance'
+          ? autoFillLinkedSiblings(state.root, node, child, nextId)
+          : []
+      if (autoFilled.length > 0) {
+        const names = [child, ...autoFilled].map((n) => `"${displayName(n)}"`).join(', ')
+        setMessage(
+          `Länkade instanser skapade under övriga utfall: ${names}. ` +
+            `Utfallsuppsättningen och nodtypen synkas automatiskt; sannolikheter är egna per instans.`,
+        )
+      } else if (child.instanceIndex > 0) {
         setMessage(
           `Länkad till variabeln "${child.label}" — utfall synkas automatiskt ` +
             `mellan alla instanser (visas som "${displayName(child)}").`,

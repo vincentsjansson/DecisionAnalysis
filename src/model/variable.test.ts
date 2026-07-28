@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { reverseTreeWithBayes } from './bayesReversal'
 import {
   addOutcome,
   displayName,
@@ -7,6 +8,7 @@ import {
 } from './tree'
 import {
   addOutcomeToGroup,
+  autoFillLinkedSiblings,
   collectGroup,
   createLinkedNode,
   groupSiblings,
@@ -202,6 +204,130 @@ describe('renameVariable — propagate to all instances', () => {
     const other = createLinkedNode(root, 'm', 'chance', 'Marknad')
     setChild(root, no, other)
     expect(() => renameVariable(root, a, 'Marknad')).toThrow(VariableConflictError)
+  })
+})
+
+describe('autoFillLinkedSiblings — grow the same variable across sibling branches', () => {
+  let idn = 0
+  const nextId = () => `auto${++idn}`
+
+  /** The exact screenshot scenario: chance "test" with outcomes 1/2/3/4, a
+   * "Hej" node added under outcome "1". */
+  function screenshotSetup() {
+    idn = 0
+    const test = new TreeNode('test', 'chance', 'test')
+    const e1 = addOutcome(test, '1', 0.25)
+    addOutcome(test, '2', 0.25)
+    addOutcome(test, '3', 0.25)
+    addOutcome(test, '4', 0.25)
+    // Add "Hej" (chance) under outcome "1".
+    const hej = new TreeNode('hej', 'chance', 'Hej')
+    setChild(test, e1, hej)
+    return { test, hej }
+  }
+
+  it('fills the other three terminal outcomes with correctly-named linked instances', () => {
+    const { test, hej } = screenshotSetup()
+    const created = autoFillLinkedSiblings(test, test, hej, nextId)
+
+    expect(created).toHaveLength(3)
+    // Every outcome of "test" now has a child; the three new ones are linked.
+    const children = test.outcomes.map((o) => o.child!)
+    expect(children.every((c) => c !== null)).toBe(true)
+    // All four share Hej's variableId and node type.
+    for (const c of children) {
+      expect(c.variableId).toBe(hej.variableId)
+      expect(c.nodeType).toBe('chance')
+      expect(c.label).toBe('Hej')
+    }
+    // Display names are primed by creation order.
+    expect(children.map((c) => displayName(c))).toEqual(['Hej', "Hej'", "Hej''", "Hej'''"])
+  })
+
+  it('syncs the outcome set but keeps probabilities independent per instance', () => {
+    const { test, hej } = screenshotSetup()
+    // Give Hej its own outcomes BEFORE auto-fill so the set is copied in.
+    addOutcome(hej, 'a', 0.6)
+    addOutcome(hej, 'b', 0.4)
+    const [hej2] = autoFillLinkedSiblings(test, test, hej, nextId)
+
+    expect(hej2.outcomes.map((o) => o.label)).toEqual(['a', 'b'])
+    // Probabilities are NOT copied — the sibling starts unset.
+    expect(hej2.outcomes.every((o) => Number.isNaN(o.probability))).toBe(true)
+    // And later adding an outcome on any instance propagates to the group.
+    addOutcomeToGroup(test, hej2, 'c')
+    expect(hej.outcomes.some((o) => o.label === 'c')).toBe(true)
+  })
+
+  it('does not overwrite a sibling that already has its own child', () => {
+    const { test, hej } = screenshotSetup()
+    // Outcome "2" already has a different, unrelated subtree.
+    const other = new TreeNode('other', 'decision', 'Annat')
+    setChild(test, test.outcomes[1], other)
+
+    autoFillLinkedSiblings(test, test, hej, nextId)
+
+    // Outcome "2" is untouched; only 3 and 4 got Hej instances.
+    expect(test.outcomes[1].child).toBe(other)
+    expect(test.outcomes[2].child!.label).toBe('Hej')
+    expect(test.outcomes[3].child!.label).toBe('Hej')
+  })
+
+  it('respects a previously-unlinked sibling (non-terminal) — does not relink it', () => {
+    const { test, hej } = screenshotSetup()
+    autoFillLinkedSiblings(test, test, hej, nextId) // fills 2,3,4 as Hej', Hej'', Hej'''
+    const hej2 = test.outcomes[1].child! // the instance under outcome "2"
+    unlinkNode(test, hej2) // user makes it independent
+
+    // Later, add a brand-new node under a freshly-terminal outcome. First make
+    // outcome "3" terminal again by detaching, then re-add + auto-fill.
+    test.outcomes[2].child!.parent = null
+    test.outcomes[2].child = null
+    const fresh = new TreeNode('fresh', 'chance', 'Hej')
+    // fresh links to the remaining Hej group (primary hej).
+    fresh.variableId = hej.variableId
+    setChild(test, test.outcomes[2], fresh)
+    autoFillLinkedSiblings(test, test, fresh, nextId)
+
+    // The unlinked instance under "2" keeps its own variableId — not relinked.
+    expect(hej2.variableId).toBe(hej2.id)
+    expect(hej2.variableId).not.toBe(hej.variableId)
+  })
+
+  it('is a no-op when there are no other terminal siblings', () => {
+    idn = 0
+    const parent = new TreeNode('p', 'chance', 'P')
+    const only = addOutcome(parent, 'x', 1)
+    const child = new TreeNode('c', 'chance', 'C')
+    setChild(parent, only, child)
+    expect(autoFillLinkedSiblings(parent, parent, child, nextId)).toHaveLength(0)
+  })
+
+  it('flip/VOC treats auto-filled instances as one variable (shared variableId)', () => {
+    idn = 0
+    // Väder (chance) Regn/Sol, decision "Åtgärd" auto-filled under both.
+    const root = new TreeNode('root', 'chance', 'Väder')
+    const regn = addOutcome(root, 'Regn', 0.4)
+    addOutcome(root, 'Sol', 0.6)
+    const act = new TreeNode('act', 'decision', 'Åtgärd')
+    setChild(root, regn, act)
+    const [act2] = autoFillLinkedSiblings(root, root, act, nextId)
+    expect(act2.variableId).toBe(act.variableId) // one variable
+
+    // Synced outcome set (Vänta/Agera), independent payoffs per instance.
+    addOutcomeToGroup(root, act, 'Vänta')
+    addOutcomeToGroup(root, act, 'Agera')
+    act.outcomes.find((o) => o.label === 'Vänta')!.value = 2
+    act.outcomes.find((o) => o.label === 'Agera')!.value = 5
+    act2.outcomes.find((o) => o.label === 'Vänta')!.value = 4
+    act2.outcomes.find((o) => o.label === 'Agera')!.value = 1
+
+    // Väder already precedes the decision (clairvoyance order) so flip is a
+    // no-op: VOC = 0 with no FlipError — proving both Åtgärd instances are
+    // recognized as the same variable (else it would reject as a mismatch).
+    const result = reverseTreeWithBayes(root)
+    expect(result.originalEv).toBeCloseTo(0.4 * 5 + 0.6 * 4) // 4.4
+    expect(result.voc).toBe(0)
   })
 })
 
