@@ -4,6 +4,73 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-07-28 (segment 12) — Konsolidera deploy till bara `main`
+
+**Vad hände:** Live-länken serverade ett gammalt bygge eftersom deploy-workflowet bara triggade på `main` medan segment 9–11 låg okmergade på `rebuild-typescript`. En tillfällig fix la till `rebuild-typescript` som andra deploy-källa (både i workflow-triggern och i `github-pages`-miljöns branch-policy). Det gav två parallella deploy-källor till samma URL — inte önskvärt permanent.
+
+**Åtgärd:** `main` görs till enda sanning för både kod och deploy. `rebuild-typescript` mergas till `main` (segment 9–11 + docs), deploy-triggern återställs till `branches: [main]`, och `rebuild-typescript` tas bort ur `github-pages`-miljöns tillåtna branches. Efter detta deployar bara push till `main`. README:s deploy-sektion uppdaterad därefter.
+
+**Branch-städning:** `cleanup` raderad (0 commits ahead av main, redundant). `feature/child-based` **lämnad orörd** — innehåller gammal C#/WPF-referenskod (VOC-display, flip-layout, save/load) som kan vara värdefull referens för ett kommande segment (riktig visuell speglingslayout i split-läge).
+
+---
+
+## 2026-07-28 (segment 11) — Spara/ladda-UI (JSON-filer)
+
+**Vad hände:** Kopplade den befintliga (sedan segment 3 testade) serialiseringen till fil-I/O och UI.
+
+- **`src/model/document.ts`:** ett dokument-omslag runt trädserialiseringen — `{ tree, displayMode, utility, idCounter }` — så en sparfil också fångar EV/EU-läge, nyttofunktionsinställningar och id-räknaren (höjs över högsta befintliga id vid laddning så nya noder inte kolliderar). `deserializeDocument` validerar fail-loud med specifika meddelanden (ogiltig JSON, saknat/okänt format, felaktig display_mode/utility, felaktig nodform, **trasig variabelgrupp** = samma variableId med olika namn/typ) — laddar aldrig ett partiellt/reparerat träd. `documentFilename` härleder ett säkert namn ur rotetiketten + datum.
+- **UI:** 💾 Spara laddar ner dokumentet (Blob + `<a download>`); 📂 Ladda öppnar filväljare, läser + validerar + applicerar och ritar om allt (träd, EV/EU, variabelgrupper). Dirty-flagga (sätts vid varje mutation, nollställs vid spara/ladda) driver en bekräftelse innan en laddning kastar osparat arbete.
+- **Tester:** 18 nya (round-trip enkel + komplex med länkade variabler/villkor/EU, idCounter-höjning, tomt dokument, sex malformerade-fall, filnamn, samt UI-spara/ladda/bekräfta-flödet). Totalt 177, alla gröna. `tsc` + build rena. Browser-verifierat end-to-end: bygg → spara ("Sparat som väder-2026-07-28.json") → ladda ett dokument återställer träd + EV/EU/CE-visning exakt (Marknad, CE 2.481 vid γ=0.15, handkontrollerat); malformerade filer ger specifika fel och lämnar trädet orört. Inga konsolfel.
+
+**Judgment calls:**
+
+1. **Sparformatet är appens eget dokument** (med `format`-tagg + version). Blott-träd-filer från annat håll avvisas med tydligt meddelande snarare än att tyst laddas — förutsägbart och matchar fail-loud-principen.
+2. **Split-läge sparar bara originalträdet** — det omvända (klarsyns-)trädet är alltid härlett/omräkningsbart, så det behöver inte persisteras; laddning återgår till enkelvy.
+3. **Osparade ändringar = dirty-flagga + confirm**, inte en beständig "osparat"-indikator. Enklare och räcker för segmentet (prompten tillät att skjuta upp en mer polerad indikator). `idCounter` persisteras + höjs defensivt över högsta `n<siffra>`-id vid laddning.
+4. **Nyttoinställningar round-trip-as** (displayMode + utility) eftersom de påverkar de visade värdena — annars skulle en laddad EU-fil visa fel siffror.
+
+**MVP-status:** oförändrat komplett. Save/load låg utanför MVP men var efterfrågat; nu klart. Fortfarande ❌ (utanför scope): VOI för imperfekt information, känslighetsanalys, flerdimensionella värdefunktioner, relevansdiagram, risk & förmåga, undo/redo, PNG-export, speglad högerträds-layout.
+
+---
+
+## 2026-07-28 (segment 10) — Auto-fill av länkade instanser (korrigering från live-test)
+
+**Vad hände:** Live-test (screenshot) visade en lucka: en slumpnod "test" med utfall 1/2/3/4 där man la "Hej" under "1" fick INTE automatiskt Hej'/Hej''/Hej''' under 2/3/4 — länkning skedde bara om man manuellt skapade varje nod med matchande namn. Detta segment gör länkningen proaktiv och omedelbar vid nodskapande.
+
+- **Modell:** `autoFillLinkedSiblings(root, parent, template, nextId)` i `variable.ts` — återanvänder `createLinkedNode` för att fylla varje fortfarande *terminalt* syskon-utfall under `parent` med en länkad instans av det nyss skapade barnet (delad `variableId`, synkad utfallsuppsättning + nodtyp, egna sannolikheter). Fires en gång per skapande, en nivå djupt (varje ny instans är barnlös → ingen kaskad). Icke-terminala syskon (redan byggd eller frikopplad struktur) lämnas orörda.
+- **UI:** `attachChild` kallar auto-fill efter att barnet kopplats — men **bara när föräldern är en slumpnod**. Meddelanderaden listar de skapade instanserna.
+- **Tester:** 10 nya (screenshot-scenariot, ingen överskrivning av befintlig struktur, respekterar tidigare unlink, unlink-en-påverkar-inte-andra, flip behandlar auto-fyllda instanser som en variabel, chance-only-grinden). Totalt 159, alla gröna. `tsc` + build rena. Browser-verifierat: screenshot-scenariot ger nu Hej/Hej'/Hej''/Hej''' automatiskt, och utfall som läggs till på en instans synkas till alla fyra. Inga konsolfel.
+
+**Judgment call (frågade användaren — genuint tvetydigt):**
+
+- **Auto-fill gäller bara slumpnoder, inte beslutsnoder.** Specen sa "any outcome of a parent", men bokstavligt tillämpat på beslutsnoder skulle det bryta asymmetriska beslutsträd — det klassiska klarsyns-/VOC-exemplet som verktyget självt räknar på är asymmetriskt ("Satsa? Ja→chansning, Nej→säker payoff"). Att auto-fylla Nej med en länkad chansnod skulle tvinga användaren att radera den. Frågade och användaren bekräftade slumpnoder-bara. Manuell namn-länkning under beslutsgrenar fungerar fortfarande om man vill ha symmetri.
+- **Terminal-vakten `if (edge.child) continue`** hanterar både "redan byggd struktur" och "tidigare frikopplad instans" (en frikopplad instans har fortfarande ett barn → icke-terminal → hoppas över), så ingen extra logik behövdes för att respektera unlinks.
+
+**Status:** MVP oförändrat komplett. Save/load-UI återstår som nästa segment (påbörjades men pausades för denna korrigering). Övrigt utanför MVP oförändrat.
+
+---
+
+## 2026-07-28 (segment 9) — Länkade variabelinstanser
+
+**Vad hände:** Gjorde "samma variabel på flera grenar" till ett förstklassigt begrepp (`variableId`) istället för en implicit namnjämförelse, och stärkte flip/VOC-valideringen med det.
+
+- **Modell:** `TreeNode` fick `variableId` (grupp; singleton = eget id) och `instanceIndex` (0 = primär; prim-markörer via `displayName`, aldrig lagrade i `label`). Nytt `src/model/variable.ts`: `createLinkedNode` (auto-länkar på namnmatch, kopierar utfallsuppsättning, typkonflikt → `VariableConflictError`), `addOutcomeToGroup`/`removeOutcomeFromGroup`/`renameOutcomeInGroup` (synkar uppsättningen, ej sannolikheter; rename kör full per-instans-omskrivning av villkorsnycklar + tokens), `renameVariable` (propagerar), `unlinkNode` (frikoppling + recompact), `relinkByName` (normalisering från namn). `bayesReversal` identifierar nu variabler via `variableId`. Serialisering persisterar `variable_id`/`instance_index` (bakåtkompatibelt).
+- **UI:** nodskapande via `createLinkedNode` med länknings-meddelande; utfallsdialogen visar "Detta påverkar även: …" och rutas via grupp-funktionerna; "Byt namn" på länkad nod döper hela variabeln; ny "⛓ Koppla loss"-menypost; alla namn visas via `displayName` (prim-markörer). Typkonflikt visas tydligt.
+- **Tester:** 19 nya (12 `variable.test.ts` inkl. den kritiska villkorstabell-integriteten över instanser, 5 UI, 2 nya flip-fall). Totalt 150, alla gröna. `tsc` + build rena. Browser-verifierat: auto-länk med synkade utfall, flip som känner igen länkade instanser som en variabel (VOC 2.1), inga konsolfel.
+
+**Judgment calls:**
+
+1. **Intern representation:** `label` = basnamn (delas av gruppen), `instanceIndex` → prim-markörer via `displayName()`, `variableId` = grupp-id (singleton = eget nod-id). Ingen central variabelregister — allt härleds genom att gå trädet, vilket passar den självständiga träd-arkitekturen.
+2. **Rename-semantik (låst beslut A från användaren):** att döpa om en nod döper hela variabeln (propagerar); unlink är en **separat** explicit menypost, inte samma gest. Detta löste den tvetydighet jag stannade och frågade om.
+3. **Unlink** ger färsk `variableId` (= nod-id), `instanceIndex` 0, behåller utfall/sannolikheter/villkorstabell; kvarvarande grupp recompactas så prim-markörer förblir sammanhängande. Behåller basnamnet (kan ge två likanamnade oberoende variabler tills användaren döper om — dokumenterat, ej ett fel).
+4. **Villkorssäker synkad rename:** varje instans har egna `nodId:etikett`-tokens, så en synkad utfalls-rename kör den fulla enkelnods-omskrivningen på varje instans (nyckel-rekey + token-rewrite över hela trädet). Testat att inga villkorsrader blir föräldralösa — detta var den datakritiska punkten prompten varnade för.
+5. **Flip-identitet via `variableId`:** två tillfälligt likanamnade men *olänkade* noder behandlas nu som olika variabler (flip avvisar) — mer robust än gammal sträng-matchning. Länkade instanser med olika visningsnamn (Väder/Väder') känns korrekt igen som en variabel. `relinkByName` finns för att normalisera externt byggda träd (t.ex. i tester), men körs aldrig automatiskt (skulle upphäva en explicit unlink).
+6. **`relinkByName` i flip-testerna:** de bygger träd med rå `new TreeNode`, så de normaliseras från namn först — speglar vad UI:t (createLinkedNode) skulle ha producerat.
+
+**MVP-status:** oförändrad — MVP var redan komplett (segment 8). Detta är en UX/robusthets-utökning ovanpå MVP. Fortfarande ❌ (utanför MVP): VOI för imperfekt information, känslighetsanalys, flerdimensionella värdefunktioner, relevansdiagram, risk & förmåga, undo/redo, PNG-export, save/load-UI, speglad högerträds-layout.
+
+---
+
 ## 2026-07-27 (segment 8) — Beräkningssteg-visning · MVP KOMPLETT
 
 **Vad hände:** Sista MVP-segmentet. Byggde steg-för-steg-visning av aritmetiken bakom varje nods värde, och regressionstestade Σ-varningen.

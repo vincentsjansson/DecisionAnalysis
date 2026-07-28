@@ -1,10 +1,16 @@
 # DecisionAnalysis
-CLick link to use tool:
-https://vincentsjansson.github.io/DecisionAnalysis/
 
 A decision analysis tool for building, visualizing, and evaluating
 decision trees — EV, conditional probabilities, and Value of
-Clairvoyance. Built as a teaching aid for an introductory course in Decision Analysis.
+Clairvoyance. Built as a teaching aid for an introductory course in
+Decision Analysis.
+
+## Testa live
+
+👉 **https://vincentsjansson.github.io/DecisionAnalysis/**
+
+Den senaste versionen deployas automatiskt hit vid varje push till
+`main`. Öppna länken i valfri webbläsare — inget installationssteg behövs.
 
 ## Architecture
 
@@ -21,8 +27,12 @@ run, or ported — this is a rebuild from spec, not a migration.
 
 ## Status
 
-Scaffolding only. Deployment pipeline is wired up; no
-decision-tree features are implemented yet.
+MVP complete: interactive decision/chance tree editing, live EV and
+Expected Utility (with γ-elicitation → certainty equivalent), transparent
+backward-fill, flip/split with Bayes clairvoyance + live VOC, step-by-step
+calculation traces, linked variable instances, and save/load to JSON.
+See [SPEC.md](SPEC.md) for the full feature status and [PROGRESS.md](PROGRESS.md)
+for the build history.
 
 ## Getting started
 
@@ -34,5 +44,8 @@ npm run build     # production build to dist/
 
 ## Deployment
 
-Every push to `main` builds the app and deploys `dist/` to GitHub
-Pages via `.github/workflows/deploy.yml`.
+`main` is the single source of truth. Every push to `main` builds the app
+and deploys `dist/` to GitHub Pages via `.github/workflows/deploy.yml`,
+served at the [live link](https://vincentsjansson.github.io/DecisionAnalysis/)
+above. Feature work happens on branches and reaches the live site by
+merging to `main`.

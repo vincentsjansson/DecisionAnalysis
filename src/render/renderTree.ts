@@ -1,4 +1,5 @@
 import type { Outcome, TreeNode } from '../model/tree'
+import { displayName } from '../model/tree'
 import { resolveProbability } from '../model/conditionalProbability'
 import { calculateExpectedValue } from '../model/expectedValue'
 import { certaintyEquivalent } from '../model/expectedUtility'
@@ -197,7 +198,7 @@ export function renderTree(
     })
 
     g.appendChild(nodeShape(box, box.node === opts.selected))
-    g.appendChild(text(0, -3, box.node.label, 'node-label'))
+    g.appendChild(text(0, -3, displayName(box.node), 'node-label'))
     g.appendChild(text(0, 13, nodeValueText(box, opts), 'node-ev'))
     const warning = nodeWarningText(box)
     if (warning) {

@@ -33,11 +33,22 @@ export class Outcome {
 export class TreeNode {
   id: string
   nodeType: NodeType
+  /** The base variable name — shared, identical, across every node in the
+   * same variable group. Priming for display comes from `instanceIndex`, not
+   * from this field, so renaming and grouping stay clean. */
   label: string
   outcomes: Outcome[]
   conditionalTable: ConditionalRow[]
   /** Set when attached via `setChild`. Used for cycle detection and path walks. */
   parent: TreeNode | null
+  /** Groups node instances of the same conceptual variable. Every node has
+   * one; a singleton's `variableId` equals its own `id`. Nodes sharing a
+   * `variableId` keep their outcome *set* synced (but not probabilities), and
+   * flip/VOC treats them as the same variable. */
+  variableId: string
+  /** 0 for the primary (unprimed) instance, 1 for the first prime, etc. Used
+   * only to render the prime-mark suffix — never baked into `label`. */
+  instanceIndex: number
 
   constructor(id: string, nodeType: NodeType, label: string) {
     this.id = id
@@ -46,7 +57,15 @@ export class TreeNode {
     this.outcomes = []
     this.conditionalTable = []
     this.parent = null
+    this.variableId = id
+    this.instanceIndex = 0
   }
+}
+
+/** Display name = base name + a prime mark per instance index ("Väder",
+ * "Väder'", "Väder''"). The primary instance shows the bare base name. */
+export function displayName(node: TreeNode): string {
+  return node.label + "'".repeat(node.instanceIndex)
 }
 
 /** The single history/condition token format used everywhere: model,

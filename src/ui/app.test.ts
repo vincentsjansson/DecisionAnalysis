@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
+import type { TreeNode } from '../model/tree'
 import { createApp } from './app'
 
 function newApp(confirmAnswer = true) {
@@ -399,6 +400,270 @@ describe('createApp', () => {
     // Still shown in EU mode (rendering is mode-independent for warnings).
     app.api.setDisplayMode('eu')
     expect(midWarning()).toBe('Σ = 1.2 ⚠')
+  })
+
+  it('auto-links a same-named node, primes its display, and reports the link', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    const no = app.api.addOutcomeTo(root, 'No')
+    const first = app.api.attachChild(root, yes, 'chance', 'Väder')
+    app.api.addOutcomeTo(first, 'Regn', 0.3, 8)
+    app.api.addOutcomeTo(first, 'Sol', 0.7, 2)
+
+    const second = app.api.attachChild(root, no, 'chance', 'Väder')
+    expect(second.variableId).toBe(first.variableId)
+    expect(second.instanceIndex).toBe(1)
+    // Outcome set synced (labels), probabilities unset on the new instance.
+    expect(second.outcomes.map((o) => o.label)).toEqual(['Regn', 'Sol'])
+    // The tree shows the primed display name.
+    const labels = [...container.querySelectorAll('.node-label')].map((n) => n.textContent)
+    expect(labels).toContain("Väder'")
+    // The user is told about the link.
+    expect((container.querySelector('.message-strip') as HTMLElement).textContent).toContain(
+      'Länkad till variabeln',
+    )
+  })
+
+  it('rejects a type-mismatched link with a clear message, no crash', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    const no = app.api.addOutcomeTo(root, 'No')
+    app.api.attachChild(root, yes, 'chance', 'Väder')
+
+    // Trying to make a decision node named "Väder" conflicts with the chance one.
+    // The menu path wraps in guarded(); simulate the guarded call:
+    let caught = ''
+    try {
+      app.api.attachChild(root, no, 'decision', 'Väder')
+    } catch (e) {
+      caught = (e as Error).message
+    }
+    expect(caught).toContain('måste ha samma typ')
+    // Tree still intact (no half-applied state).
+    expect(container.querySelector('[data-node-id]')).not.toBeNull()
+  })
+
+  it('outcome edit on one instance propagates to the linked sibling', () => {
+    const { app } = newApp()
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    const no = app.api.addOutcomeTo(root, 'No')
+    const a = app.api.attachChild(root, yes, 'chance', 'Väder')
+    const b = app.api.attachChild(root, no, 'chance', 'Väder')
+
+    app.api.addOutcomeTo(a, 'Regn', 0.3, 8)
+    // Propagated to b (label only).
+    expect(b.outcomes.map((o) => o.label)).toEqual(['Regn'])
+    expect(Number.isNaN(b.outcomes[0].probability)).toBe(true)
+
+    // Renaming the outcome propagates too.
+    app.api.renameOutcomeOn(a, a.outcomes[0], 'Nederbörd')
+    expect(b.outcomes.map((o) => o.label)).toEqual(['Nederbörd'])
+  })
+
+  it('renaming a linked node renames the whole variable; unlink detaches it', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    const no = app.api.addOutcomeTo(root, 'No')
+    const a = app.api.attachChild(root, yes, 'chance', 'Väder')
+    const b = app.api.attachChild(root, no, 'chance', 'Väder')
+
+    app.api.renameNode(a, 'Klimat')
+    expect(a.label).toBe('Klimat')
+    expect(b.label).toBe('Klimat') // propagated
+
+    app.api.unlinkVariable(b)
+    expect(b.variableId).toBe(b.id)
+    expect(b.instanceIndex).toBe(0)
+    // After unlink, edits to a no longer reach b.
+    app.api.addOutcomeTo(a, 'X')
+    expect(a.outcomes.some((o) => o.label === 'X')).toBe(true)
+    expect(b.outcomes.some((o) => o.label === 'X')).toBe(false)
+    expect((container.querySelector('.message-strip') as HTMLElement).textContent).toContain(
+      'frikopplad',
+    )
+  })
+
+  it('the outcomes dialog shows which other instances an edit affects', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    const no = app.api.addOutcomeTo(root, 'No')
+    const a = app.api.attachChild(root, yes, 'chance', 'Väder')
+    app.api.attachChild(root, no, 'chance', 'Väder')
+
+    // Open the outcomes dialog on the primary via its context menu.
+    app.api.selectNode(a)
+    container
+      .querySelector('[data-node-id="' + a.id + '"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    ;[...container.querySelectorAll('.menu-item')]
+      .find((b) => b.textContent!.includes('Redigera utfall'))!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    const note = container.querySelector('.sync-note')
+    expect(note).not.toBeNull()
+    expect(note!.textContent).toContain("Väder'")
+  })
+
+  it('auto-fills linked siblings under a chance parent (the screenshot scenario)', () => {
+    const { app, container } = newApp()
+    // Chance "test" with outcomes 1/2/3/4.
+    const test = app.api.createRoot('chance', 'test')
+    const e1 = app.api.addOutcomeTo(test, '1', 0.25)
+    app.api.addOutcomeTo(test, '2', 0.25)
+    app.api.addOutcomeTo(test, '3', 0.25)
+    app.api.addOutcomeTo(test, '4', 0.25)
+
+    // Add "Hej" under outcome "1" only.
+    const hej = app.api.attachChild(test, e1, 'chance', 'Hej')
+
+    // Outcomes 2/3/4 now hold linked Hej instances (no more terminals).
+    const children = test.outcomes.map((o) => o.child)
+    expect(children.every((c) => c !== null)).toBe(true)
+    for (const c of children) {
+      expect(c!.variableId).toBe(hej.variableId)
+      expect(c!.nodeType).toBe('chance')
+      expect(c!.label).toBe('Hej')
+    }
+    // Primed display names appear in the tree.
+    const labels = [...container.querySelectorAll('.node-label')].map((n) => n.textContent)
+    expect(labels).toEqual(expect.arrayContaining(['test', 'Hej', "Hej'", "Hej''", "Hej'''"]))
+    // The user is told several linked instances were created.
+    expect((container.querySelector('.message-strip') as HTMLElement).textContent).toContain(
+      'Länkade instanser skapade under övriga utfall',
+    )
+    // Adding an outcome on Hej propagates to all instances (synced set).
+    app.api.addOutcomeTo(hej, 'x', 0.5, 3)
+    for (const c of children) expect(c!.outcomes.some((o) => o.label === 'x')).toBe(true)
+  })
+
+  it('does NOT auto-fill under a decision parent (asymmetric decisions preserved)', () => {
+    const { app } = newApp()
+    const bet = app.api.createRoot('decision', 'Satsa')
+    const ja = app.api.addOutcomeTo(bet, 'Ja')
+    app.api.addOutcomeTo(bet, 'Nej', NaN, 3) // safe terminal payoff
+
+    app.api.attachChild(bet, ja, 'chance', 'Väder')
+
+    // "Nej" stays a terminal payoff — not auto-filled with a linked chance node.
+    const nej = bet.outcomes.find((o) => o.label === 'Nej')!
+    expect(nej.child).toBeNull()
+    expect(nej.value).toBe(3)
+  })
+
+  it('unlinking an auto-filled instance does not affect the others', () => {
+    const { app } = newApp()
+    const test = app.api.createRoot('chance', 'test')
+    const e1 = app.api.addOutcomeTo(test, '1', 0.25)
+    app.api.addOutcomeTo(test, '2', 0.25)
+    app.api.addOutcomeTo(test, '3', 0.25)
+    app.api.addOutcomeTo(test, '4', 0.25)
+    const hej = app.api.attachChild(test, e1, 'chance', 'Hej')
+
+    const under2 = test.outcomes[1].child! // an auto-filled instance
+    app.api.unlinkVariable(under2)
+
+    expect(under2.variableId).toBe(under2.id) // independent now
+    // The others remain grouped with hej.
+    expect(test.outcomes[2].child!.variableId).toBe(hej.variableId)
+    expect(test.outcomes[3].child!.variableId).toBe(hej.variableId)
+    // And an outcome added on hej no longer reaches the unlinked one.
+    app.api.addOutcomeTo(hej, 'z')
+    expect(under2.outcomes.some((o) => o.label === 'z')).toBe(false)
+    expect(test.outcomes[2].child!.outcomes.some((o) => o.label === 'z')).toBe(true)
+  })
+
+  it('save/load round-trips the tree and settings through the app', () => {
+    const { app } = newApp()
+    const test = app.api.createRoot('chance', 'Väder')
+    app.api.addOutcomeTo(test, 'Regn', 0.3, 8)
+    app.api.addOutcomeTo(test, 'Sol', 0.7, 2)
+    app.api.setDisplayMode('eu')
+    app.api.setUtilityParameter(0.2)
+
+    const json = app.api.exportDocument()
+    expect(app.state.dirty).toBe(false) // saving clears dirty
+
+    // Load into a fresh app instance (clean state).
+    const fresh = newApp().app
+    expect(fresh.api.loadDocument(json)).toBe(true)
+    expect(fresh.state.root!.label).toBe('Väder')
+    expect(fresh.state.root!.outcomes.map((o) => o.value)).toEqual([8, 2])
+    expect(fresh.state.displayMode).toBe('eu')
+    expect(fresh.state.utilityFn).toEqual({ type: 'exponential', parameter: 0.2 })
+    expect(fresh.state.dirty).toBe(false)
+  })
+
+  it('round-trips linked variables + conditional tables + EU through save/load', () => {
+    const { app } = newApp()
+    const test = app.api.createRoot('chance', 'test')
+    const e1 = app.api.addOutcomeTo(test, '1', 0.5)
+    app.api.addOutcomeTo(test, '2', 0.5)
+    const hej = app.api.attachChild(test, e1, 'chance', 'Hej') // auto-fills Hej' under "2"
+    app.api.addOutcomeTo(hej, 'a', 0.6, 3)
+    app.api.addOutcomeTo(hej, 'b', 0.4, 1)
+    app.api.setConditionalTable(hej, [
+      { condition: new Set([`${test.id}:1`]), probabilities: { a: 0.9, b: 0.1 } },
+    ])
+    app.api.setDisplayMode('eu')
+
+    const restored = newApp().app
+    restored.api.loadDocument(app.api.exportDocument())
+
+    const nodes: TreeNode[] = []
+    const walk = (n: TreeNode) => {
+      nodes.push(n)
+      for (const o of n.outcomes) if (o.child) walk(o.child)
+    }
+    walk(restored.state.root!)
+    const hejGroup = nodes.filter((n) => n.label === 'Hej')
+    expect(hejGroup).toHaveLength(2)
+    expect(new Set(hejGroup.map((n) => n.variableId)).size).toBe(1) // still one group
+    const primary = hejGroup.find((n) => n.instanceIndex === 0)!
+    expect(primary.conditionalTable[0].probabilities).toEqual({ a: 0.9, b: 0.1 })
+  })
+
+  it('rejects a malformed file with a clear error, without loading', () => {
+    const { app } = newApp()
+    app.api.createRoot('chance', 'Original')
+    const before = app.state.root
+
+    let err = ''
+    try {
+      app.api.loadDocument('{ not valid json', { skipConfirm: true })
+    } catch (e) {
+      err = (e as Error).message
+    }
+    expect(err).toMatch(/giltig JSON/)
+    // Tree untouched.
+    expect(app.state.root).toBe(before)
+  })
+
+  it('confirms before discarding unsaved changes on load', () => {
+    // confirmFn returns false -> load is cancelled.
+    const container = document.createElement('div')
+    const app = createApp(container, { confirmFn: () => false })
+    app.api.createRoot('chance', 'Kladd') // makes state dirty
+    expect(app.state.dirty).toBe(true)
+
+    const otherDoc = (() => {
+      const c2 = document.createElement('div')
+      const a2 = createApp(c2, { confirmFn: () => true })
+      a2.api.createRoot('decision', 'Annat')
+      return a2.api.exportDocument()
+    })()
+
+    // Dirty + confirm=false -> loadDocument returns false, keeps current tree.
+    expect(app.api.loadDocument(otherDoc)).toBe(false)
+    expect(app.state.root!.label).toBe('Kladd')
+
+    // skipConfirm bypasses the prompt.
+    expect(app.api.loadDocument(otherDoc, { skipConfirm: true })).toBe(true)
+    expect(app.state.root!.label).toBe('Annat')
   })
 
   it('"Lägg till nod" opens the create-root dialog only for an empty tree', () => {

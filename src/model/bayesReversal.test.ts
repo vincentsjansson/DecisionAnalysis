@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { ensureVocInvariant, FlipError, reverseTreeWithBayes } from './bayesReversal'
 import { calculateExpectedValue } from './expectedValue'
 import { addOutcome, setChild, TreeNode } from './tree'
+import { relinkByName } from './variable'
+
+/** Real usage links same-named nodes at creation time (createLinkedNode).
+ * These tests build trees with raw `new TreeNode`, so normalize groups from
+ * base names first — mirroring what the UI would have produced. */
+function flip(root: TreeNode) {
+  relinkByName(root)
+  return reverseTreeWithBayes(root)
+}
 
 /**
  * The classic textbook case (decision first, one chance variable, one branch
@@ -29,14 +38,14 @@ function classicTree() {
 
 describe('reverseTreeWithBayes — classic asymmetric case with duplication', () => {
   it('computes the hand-calculated VOC', () => {
-    const result = reverseTreeWithBayes(classicTree())
+    const result = flip(classicTree())
     expect(result.originalEv).toBeCloseTo(3.8)
     expect(result.flippedEv).toBeCloseTo(4.5)
     expect(result.voc).toBeCloseTo(0.7)
   })
 
   it('builds chance-first structure with marginals and duplicated terminals', () => {
-    const { flipped } = reverseTreeWithBayes(classicTree())
+    const { flipped } = flip(classicTree())
 
     expect(flipped.nodeType).toBe('chance')
     expect(flipped.label).toBe('Weather')
@@ -58,7 +67,7 @@ describe('reverseTreeWithBayes — classic asymmetric case with duplication', ()
 
   it('gives the flipped tree fresh flip_-prefixed ids and no shared references', () => {
     const original = classicTree()
-    const { flipped } = reverseTreeWithBayes(original)
+    const { flipped } = flip(original)
 
     const collect = (n: TreeNode, out: TreeNode[] = []): TreeNode[] => {
       out.push(n)
@@ -110,7 +119,7 @@ describe('reverseTreeWithBayes — two chance variables with path-dependent dist
   }
 
   it('computes the hand-calculated VOC and preserves per-context distributions', () => {
-    const result = reverseTreeWithBayes(twoChanceTree())
+    const result = flip(twoChanceTree())
     expect(result.originalEv).toBeCloseTo(5.4)
     expect(result.flippedEv).toBeCloseTo(6.8)
     expect(result.voc).toBeCloseTo(1.4)
@@ -130,7 +139,7 @@ describe('reverseTreeWithBayes — two chance variables with path-dependent dist
 
   it('VOC equals EV(flipped) − EV(original) recomputed independently', () => {
     const original = twoChanceTree()
-    const { flipped, voc } = reverseTreeWithBayes(original)
+    const { flipped, voc } = flip(original)
     expect(voc).toBeCloseTo(calculateExpectedValue(flipped) - calculateExpectedValue(original))
   })
 })
@@ -149,9 +158,9 @@ describe('reverseTreeWithBayes — scope validation', () => {
     addOutcome(market, 'Up', 0.5, 3)
     addOutcome(market, 'Down', 0.5, 4)
 
-    expect(() => reverseTreeWithBayes(root)).toThrow(FlipError)
-    expect(() => reverseTreeWithBayes(root)).toThrow(/Weather/)
-    expect(() => reverseTreeWithBayes(root)).toThrow(/Market/)
+    expect(() => flip(root)).toThrow(FlipError)
+    expect(() => flip(root)).toThrow(/Weather/)
+    expect(() => flip(root)).toThrow(/Market/)
   })
 
   it('rejects the same variable with different outcome sets', () => {
@@ -167,7 +176,7 @@ describe('reverseTreeWithBayes — scope validation', () => {
     addOutcome(w2, 'Rain', 0.5, 3)
     addOutcome(w2, 'Snow', 0.5, 4)
 
-    expect(() => reverseTreeWithBayes(root)).toThrow(/same outcomes everywhere/)
+    expect(() => flip(root)).toThrow(/same outcomes everywhere/)
   })
 
   it('rejects chance distributions that depend on the decision branch', () => {
@@ -183,7 +192,7 @@ describe('reverseTreeWithBayes — scope validation', () => {
     addOutcome(w2, 'Rain', 0.5, 3)
     addOutcome(w2, 'Sun', 0.5, 4)
 
-    expect(() => reverseTreeWithBayes(root)).toThrow(/differs between branches/)
+    expect(() => flip(root)).toThrow(/differs between branches/)
   })
 
   it('rejects a duplicate variable label at two levels', () => {
@@ -193,18 +202,72 @@ describe('reverseTreeWithBayes — scope validation', () => {
     setChild(root, edge, inner)
     addOutcome(inner, 'stop', 1, 5)
 
-    expect(() => reverseTreeWithBayes(root)).toThrow(/two different levels/)
+    expect(() => flip(root)).toThrow(/two different levels/)
   })
 
   it('rejects chance probabilities that do not sum to 1', () => {
     const root = new TreeNode('w', 'chance', 'Weather')
     addOutcome(root, 'Rain', 0.3, 1)
     addOutcome(root, 'Sun', 0.3, 2)
-    expect(() => reverseTreeWithBayes(root)).toThrow(/sum to 0.6/)
+    expect(() => flip(root)).toThrow(/sum to 0.6/)
   })
 
   it('rejects an empty tree', () => {
-    expect(() => reverseTreeWithBayes(new TreeNode('r', 'chance', 'R'))).toThrow(FlipError)
+    expect(() => flip(new TreeNode('r', 'chance', 'R'))).toThrow(FlipError)
+  })
+})
+
+describe('reverseTreeWithBayes — variableId-based matching', () => {
+  it('recognizes linked instances as the same variable despite primed display names', () => {
+    // Bet(decision): Yes -> Väder (primary), No -> Väder' (linked instance).
+    // Same variableId, different display names, same outcomes/distribution.
+    const root = new TreeNode('d', 'decision', 'Bet')
+    const yes = addOutcome(root, 'Yes')
+    const no = addOutcome(root, 'No')
+    const primary = new TreeNode('w1', 'chance', 'Väder')
+    setChild(root, yes, primary)
+    addOutcome(primary, 'Regn', 0.3, 8)
+    addOutcome(primary, 'Sol', 0.7, 2)
+    const secondary = new TreeNode('w2', 'chance', 'Väder')
+    setChild(root, no, secondary)
+    addOutcome(secondary, 'Regn', 0.3, 1)
+    addOutcome(secondary, 'Sol', 0.7, 5)
+
+    // Explicitly link them (as createLinkedNode would): shared variableId,
+    // secondary primed to instance 1.
+    secondary.variableId = primary.variableId
+    secondary.instanceIndex = 1
+    expect(secondary.label).toBe('Väder') // base name shared
+
+    // Same variable at one level -> flippable. Väder goes first (chance),
+    // then the Bet decision. EV(orig) = max(0.3·8+0.7·2, 0.3·1+0.7·5) =
+    // max(3.8, 3.8) = 3.8. Flipped: 0.3·max(8,1) + 0.7·max(2,5) = 2.4+3.5 = 5.9.
+    const result = reverseTreeWithBayes(root)
+    expect(result.flipped.label).toBe('Väder')
+    expect(result.originalEv).toBeCloseTo(3.8)
+    expect(result.flippedEv).toBeCloseTo(5.9)
+    expect(result.voc).toBeCloseTo(2.1)
+  })
+
+  it('rejects two same-named but UNLINKED nodes (different variableId) as different variables', () => {
+    // Identical to the case above but NOT linked — coincidental name match.
+    const root = new TreeNode('d', 'decision', 'Bet')
+    const yes = addOutcome(root, 'Yes')
+    const no = addOutcome(root, 'No')
+    const a = new TreeNode('w1', 'chance', 'Väder')
+    setChild(root, yes, a)
+    addOutcome(a, 'Regn', 0.3, 8)
+    addOutcome(a, 'Sol', 0.7, 2)
+    const b = new TreeNode('w2', 'chance', 'Väder')
+    setChild(root, no, b)
+    addOutcome(b, 'Regn', 0.3, 1)
+    addOutcome(b, 'Sol', 0.7, 5)
+
+    // No relink, distinct variableIds (w1, w2) -> treated as different
+    // variables at the same level -> reject.
+    expect(() => reverseTreeWithBayes(root)).toThrow(
+      /same variables in the same order|same name are only treated as the same variable when linked/,
+    )
   })
 })
 
@@ -223,7 +286,7 @@ describe('reverseTreeWithBayes — edge cases and invariants', () => {
     addOutcome(d2, 'Stop', NaN, 5)
     addOutcome(d2, 'Go', NaN, 1)
 
-    const result = reverseTreeWithBayes(root)
+    const result = flip(root)
     // EV = 0.3·max(0,8) + 0.7·max(5,1) = 2.4 + 3.5 = 5.9 in both trees.
     expect(result.originalEv).toBeCloseTo(5.9)
     expect(result.flippedEv).toBeCloseTo(5.9)
@@ -234,7 +297,7 @@ describe('reverseTreeWithBayes — edge cases and invariants', () => {
     const root = new TreeNode('w', 'chance', 'Weather')
     addOutcome(root, 'Rain', NaN, 8)
     addOutcome(root, 'Sun', NaN, 2)
-    const result = reverseTreeWithBayes(root)
+    const result = flip(root)
     expect(Number.isNaN(result.voc)).toBe(true)
     expect(result.flipped.outcomes.every((o) => Number.isNaN(o.probability))).toBe(true)
   })
