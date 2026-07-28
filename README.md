@@ -1,5 +1,7 @@
 # DecisionAnalysis
+CLick link to use tool:
 https://vincentsjansson.github.io/DecisionAnalysis/
+
 A decision analysis tool for building, visualizing, and evaluating
 decision trees — EV, conditional probabilities, and Value of
 Clairvoyance. Built as a teaching aid for an introductory course in Decision Analysis.
