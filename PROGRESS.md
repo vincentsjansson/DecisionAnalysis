@@ -4,6 +4,27 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-07-28 (segment 9) — Länkade variabelinstanser
+
+**Vad hände:** Gjorde "samma variabel på flera grenar" till ett förstklassigt begrepp (`variableId`) istället för en implicit namnjämförelse, och stärkte flip/VOC-valideringen med det.
+
+- **Modell:** `TreeNode` fick `variableId` (grupp; singleton = eget id) och `instanceIndex` (0 = primär; prim-markörer via `displayName`, aldrig lagrade i `label`). Nytt `src/model/variable.ts`: `createLinkedNode` (auto-länkar på namnmatch, kopierar utfallsuppsättning, typkonflikt → `VariableConflictError`), `addOutcomeToGroup`/`removeOutcomeFromGroup`/`renameOutcomeInGroup` (synkar uppsättningen, ej sannolikheter; rename kör full per-instans-omskrivning av villkorsnycklar + tokens), `renameVariable` (propagerar), `unlinkNode` (frikoppling + recompact), `relinkByName` (normalisering från namn). `bayesReversal` identifierar nu variabler via `variableId`. Serialisering persisterar `variable_id`/`instance_index` (bakåtkompatibelt).
+- **UI:** nodskapande via `createLinkedNode` med länknings-meddelande; utfallsdialogen visar "Detta påverkar även: …" och rutas via grupp-funktionerna; "Byt namn" på länkad nod döper hela variabeln; ny "⛓ Koppla loss"-menypost; alla namn visas via `displayName` (prim-markörer). Typkonflikt visas tydligt.
+- **Tester:** 19 nya (12 `variable.test.ts` inkl. den kritiska villkorstabell-integriteten över instanser, 5 UI, 2 nya flip-fall). Totalt 150, alla gröna. `tsc` + build rena. Browser-verifierat: auto-länk med synkade utfall, flip som känner igen länkade instanser som en variabel (VOC 2.1), inga konsolfel.
+
+**Judgment calls:**
+
+1. **Intern representation:** `label` = basnamn (delas av gruppen), `instanceIndex` → prim-markörer via `displayName()`, `variableId` = grupp-id (singleton = eget nod-id). Ingen central variabelregister — allt härleds genom att gå trädet, vilket passar den självständiga träd-arkitekturen.
+2. **Rename-semantik (låst beslut A från användaren):** att döpa om en nod döper hela variabeln (propagerar); unlink är en **separat** explicit menypost, inte samma gest. Detta löste den tvetydighet jag stannade och frågade om.
+3. **Unlink** ger färsk `variableId` (= nod-id), `instanceIndex` 0, behåller utfall/sannolikheter/villkorstabell; kvarvarande grupp recompactas så prim-markörer förblir sammanhängande. Behåller basnamnet (kan ge två likanamnade oberoende variabler tills användaren döper om — dokumenterat, ej ett fel).
+4. **Villkorssäker synkad rename:** varje instans har egna `nodId:etikett`-tokens, så en synkad utfalls-rename kör den fulla enkelnods-omskrivningen på varje instans (nyckel-rekey + token-rewrite över hela trädet). Testat att inga villkorsrader blir föräldralösa — detta var den datakritiska punkten prompten varnade för.
+5. **Flip-identitet via `variableId`:** två tillfälligt likanamnade men *olänkade* noder behandlas nu som olika variabler (flip avvisar) — mer robust än gammal sträng-matchning. Länkade instanser med olika visningsnamn (Väder/Väder') känns korrekt igen som en variabel. `relinkByName` finns för att normalisera externt byggda träd (t.ex. i tester), men körs aldrig automatiskt (skulle upphäva en explicit unlink).
+6. **`relinkByName` i flip-testerna:** de bygger träd med rå `new TreeNode`, så de normaliseras från namn först — speglar vad UI:t (createLinkedNode) skulle ha producerat.
+
+**MVP-status:** oförändrad — MVP var redan komplett (segment 8). Detta är en UX/robusthets-utökning ovanpå MVP. Fortfarande ❌ (utanför MVP): VOI för imperfekt information, känslighetsanalys, flerdimensionella värdefunktioner, relevansdiagram, risk & förmåga, undo/redo, PNG-export, save/load-UI, speglad högerträds-layout.
+
+---
+
 ## 2026-07-27 (segment 8) — Beräkningssteg-visning · MVP KOMPLETT
 
 **Vad hände:** Sista MVP-segmentet. Byggde steg-för-steg-visning av aritmetiken bakom varje nods värde, och regressionstestade Σ-varningen.
