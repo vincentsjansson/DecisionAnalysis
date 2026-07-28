@@ -5,6 +5,14 @@ decision trees — EV, conditional probabilities, and Value of
 Clairvoyance. Built as a teaching aid for an introductory course in
 risk, safety, and crisis management.
 
+## Testa live
+
+👉 **https://vincentsjansson.github.io/DecisionAnalysis/**
+
+Den senaste versionen deployas automatiskt hit vid varje push till
+`rebuild-typescript` (och `main`). Öppna länken i valfri webbläsare —
+inget installationssteg behövs.
+
 ## Architecture
 
 Static TypeScript web app (Vite, vanilla-ts). No backend, no server —
@@ -20,8 +28,12 @@ run, or ported — this is a rebuild from spec, not a migration.
 
 ## Status
 
-Scaffolding only. Deployment pipeline is wired up; no
-decision-tree features are implemented yet.
+MVP complete: interactive decision/chance tree editing, live EV and
+Expected Utility (with γ-elicitation → certainty equivalent), transparent
+backward-fill, flip/split with Bayes clairvoyance + live VOC, step-by-step
+calculation traces, linked variable instances, and save/load to JSON.
+See [SPEC.md](SPEC.md) for the full feature status and [PROGRESS.md](PROGRESS.md)
+for the build history.
 
 ## Getting started
 
@@ -33,5 +45,6 @@ npm run build     # production build to dist/
 
 ## Deployment
 
-Every push to `main` builds the app and deploys `dist/` to GitHub
-Pages via `.github/workflows/deploy.yml`.
+Every push to `main` or `rebuild-typescript` builds the app and deploys
+`dist/` to GitHub Pages via `.github/workflows/deploy.yml`, served at the
+[live link](https://vincentsjansson.github.io/DecisionAnalysis/) above.
