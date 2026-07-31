@@ -4,6 +4,24 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-07-28 (segment 13) — Rekursiv/tvärgående mirroring av länkade instanser
+
+**Vad hände:** Live-test avslöjade att auto-fyllen (segment 10) bara verkade på ett plan: när "okej" lades under nämen:1 fylldes nämens egna syskonutfall (okej', okej'' under nämen) men INTE motsvarande position på nämen'/nämen'' — de förblev öar. Byggde man ut nämen' separat fick den en orelaterad struktur.
+
+**Åtgärd:** Ersatte `autoFillLinkedSiblings` (egen-nivå-fyllning) med `mirrorLinkedInstances`, som speglar över hela rutnätet `grupp(förälder) × utfall`: för varje instans av förälderns variabel (föräldern själv + länkade syskon P', P'') och varje terminalt utfall på den instansen skapas en länkad instans av det nyskapade barnet. Det täcker båda dimensionerna i ett svep — egna terminala syskon (gamla task #12) OCH motsvarande utfall på förälderns länkade syskon. `attachChild` anropar den (fortsatt chance-gate). Positionsmappningen är label-baserad (samma nyckel som utfalls-synken; entydig i befintlig kod).
+
+**Testresultat:** 8 nya tester (screenshot 9-grid, oberoende sannolikheter + synkad uppsättning, no-overwrite av avvikande gren, granular unlink på djupet, djup-komposition till 18-grid, flip/VOC med nästlade grupper, bunden-prestanda på 5 nivåer, + UI-flödestest). Totalt 185, alla gröna. `tsc` + build rena. **Live-verifierat (bild 1 → bild 2):** byggde nämen-gruppen (3 instanser), la okej under nämen:1 → 9 okej-instanser över hela rutnätet (13 noder totalt), meddelanderaden listade dem; granular unlink på en nästlad okej gav "frikopplad" och lämnade resten intakt. Inga konsolfel.
+
+**Judgment calls:**
+
+1. **Ett bundet pass, ingen rekursion i handlern.** Nyckelinsikt: en nyskapad nod är alltid barnlös vid skapandet, så ett enda grid-fill-pass (|grupp|×|utfall|) ger exakt önskad slutbild. Djup komponeras via efterföljande skapande-event (var och en triggar handlern en gång för sin grupp) — inte via rekursion i passet. Detta uppfyller prestandakravet ("EN pass, ingen trädtäckande sökning, får inte cascada obegränsat") bättre än den bokstavliga rekursion prompten skisserade, och ger samma slutresultat. Prestandatest: 5 nivåer, <1s, <500 noder.
+2. **Namngivning: befintligt enkel-index-schema, inget specialfall.** Prompten skissade "'okej" (ledande prim per förälder-instans). Vår `displayName` = basnamn + efterföljande primar via ett enda `instanceIndex`. De 9 okej-instanserna blir alltså okej, okej', …, okej⁸ (en grupp, unika namn), inte en 2D ledande/efterföljande-notation. Prompten sa uttryckligen "verifiera att er befintliga auto-namngivningslogik redan producerar detta korrekt utan specialfall" — så jag behöll det existerande schemat (funktionellt korrekt: en synkad grupp med unika namn). Ett 2D-namnschema vore en separat kosmetisk ändring; flaggas här om det önskas.
+3. **Granular unlink fungerade redan** på valfritt djup tack vare att `variableId` är per-nod oberoende av förälderns — verifierat med test, ingen modelländring behövdes.
+4. **Flip/VOC krävde inga ändringar** i `bayesReversal.ts` (redan variableId-baserad) — verifierat med test för nästlade grupper.
+5. **Committat direkt på `main`** (nu enda branchen) utan separat PR — omfånget är avgränsat (en modellfunktion + tester + docs, 185 gröna, live-verifierat), så en PR-granskningsrunda bedömdes inte motiverad.
+
+---
+
 ## 2026-07-28 (segment 12) — Konsolidera deploy till bara `main`
 
 **Vad hände:** Live-länken serverade ett gammalt bygge eftersom deploy-workflowet bara triggade på `main` medan segment 9–11 låg okmergade på `rebuild-typescript`. En tillfällig fix la till `rebuild-typescript` som andra deploy-källa (både i workflow-triggern och i `github-pages`-miljöns branch-policy). Det gav två parallella deploy-källor till samma URL — inte önskvärt permanent.

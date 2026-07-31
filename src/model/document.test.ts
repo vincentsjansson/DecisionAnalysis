@@ -8,7 +8,7 @@ import {
 import type { DecisionDocument } from './document'
 import { serializeTree } from './serialization'
 import { addOutcome, setChild, TreeNode } from './tree'
-import { addOutcomeToGroup, autoFillLinkedSiblings } from './variable'
+import { addOutcomeToGroup, mirrorLinkedInstances } from './variable'
 import type { UtilityFunction } from './utility'
 
 function roundTrip(doc: DecisionDocument): DecisionDocument {
@@ -44,7 +44,7 @@ describe('document round-trip', () => {
     addOutcome(test, '3', 0.2)
     const hej = new TreeNode('n2', 'chance', 'Hej')
     setChild(test, e1, hej)
-    const filled = autoFillLinkedSiblings(test, test, hej, nextId)
+    const filled = mirrorLinkedInstances(test, test, hej, nextId)
     expect(filled).toHaveLength(2)
     // Synced outcome set on the whole Hej group.
     addOutcomeToGroup(test, hej, 'a')

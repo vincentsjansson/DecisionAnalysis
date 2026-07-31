@@ -8,7 +8,8 @@ import {
 } from './tree'
 import {
   addOutcomeToGroup,
-  autoFillLinkedSiblings,
+  allNodes,
+  mirrorLinkedInstances,
   collectGroup,
   createLinkedNode,
   groupSiblings,
@@ -207,7 +208,7 @@ describe('renameVariable — propagate to all instances', () => {
   })
 })
 
-describe('autoFillLinkedSiblings — grow the same variable across sibling branches', () => {
+describe('mirrorLinkedInstances — grow the same variable across the parent group grid', () => {
   let idn = 0
   const nextId = () => `auto${++idn}`
 
@@ -228,7 +229,7 @@ describe('autoFillLinkedSiblings — grow the same variable across sibling branc
 
   it('fills the other three terminal outcomes with correctly-named linked instances', () => {
     const { test, hej } = screenshotSetup()
-    const created = autoFillLinkedSiblings(test, test, hej, nextId)
+    const created = mirrorLinkedInstances(test, test, hej, nextId)
 
     expect(created).toHaveLength(3)
     // Every outcome of "test" now has a child; the three new ones are linked.
@@ -249,7 +250,7 @@ describe('autoFillLinkedSiblings — grow the same variable across sibling branc
     // Give Hej its own outcomes BEFORE auto-fill so the set is copied in.
     addOutcome(hej, 'a', 0.6)
     addOutcome(hej, 'b', 0.4)
-    const [hej2] = autoFillLinkedSiblings(test, test, hej, nextId)
+    const [hej2] = mirrorLinkedInstances(test, test, hej, nextId)
 
     expect(hej2.outcomes.map((o) => o.label)).toEqual(['a', 'b'])
     // Probabilities are NOT copied — the sibling starts unset.
@@ -265,7 +266,7 @@ describe('autoFillLinkedSiblings — grow the same variable across sibling branc
     const other = new TreeNode('other', 'decision', 'Annat')
     setChild(test, test.outcomes[1], other)
 
-    autoFillLinkedSiblings(test, test, hej, nextId)
+    mirrorLinkedInstances(test, test, hej, nextId)
 
     // Outcome "2" is untouched; only 3 and 4 got Hej instances.
     expect(test.outcomes[1].child).toBe(other)
@@ -275,7 +276,7 @@ describe('autoFillLinkedSiblings — grow the same variable across sibling branc
 
   it('respects a previously-unlinked sibling (non-terminal) — does not relink it', () => {
     const { test, hej } = screenshotSetup()
-    autoFillLinkedSiblings(test, test, hej, nextId) // fills 2,3,4 as Hej', Hej'', Hej'''
+    mirrorLinkedInstances(test, test, hej, nextId) // fills 2,3,4 as Hej', Hej'', Hej'''
     const hej2 = test.outcomes[1].child! // the instance under outcome "2"
     unlinkNode(test, hej2) // user makes it independent
 
@@ -287,7 +288,7 @@ describe('autoFillLinkedSiblings — grow the same variable across sibling branc
     // fresh links to the remaining Hej group (primary hej).
     fresh.variableId = hej.variableId
     setChild(test, test.outcomes[2], fresh)
-    autoFillLinkedSiblings(test, test, fresh, nextId)
+    mirrorLinkedInstances(test, test, fresh, nextId)
 
     // The unlinked instance under "2" keeps its own variableId — not relinked.
     expect(hej2.variableId).toBe(hej2.id)
@@ -300,7 +301,7 @@ describe('autoFillLinkedSiblings — grow the same variable across sibling branc
     const only = addOutcome(parent, 'x', 1)
     const child = new TreeNode('c', 'chance', 'C')
     setChild(parent, only, child)
-    expect(autoFillLinkedSiblings(parent, parent, child, nextId)).toHaveLength(0)
+    expect(mirrorLinkedInstances(parent, parent, child, nextId)).toHaveLength(0)
   })
 
   it('flip/VOC treats auto-filled instances as one variable (shared variableId)', () => {
@@ -311,7 +312,7 @@ describe('autoFillLinkedSiblings — grow the same variable across sibling branc
     addOutcome(root, 'Sol', 0.6)
     const act = new TreeNode('act', 'decision', 'Åtgärd')
     setChild(root, regn, act)
-    const [act2] = autoFillLinkedSiblings(root, root, act, nextId)
+    const [act2] = mirrorLinkedInstances(root, root, act, nextId)
     expect(act2.variableId).toBe(act.variableId) // one variable
 
     // Synced outcome set (Vänta/Agera), independent payoffs per instance.
@@ -328,6 +329,207 @@ describe('autoFillLinkedSiblings — grow the same variable across sibling branc
     const result = reverseTreeWithBayes(root)
     expect(result.originalEv).toBeCloseTo(0.4 * 5 + 0.6 * 4) // 4.4
     expect(result.voc).toBe(0)
+  })
+})
+
+describe('mirrorLinkedInstances — nested cross-instance mirroring', () => {
+  let idn = 0
+  const nextId = () => `x${++idn}`
+
+  /** The screenshot setup: a chance variable "nämen" with three linked
+   * instances (under a grandparent's three outcomes), each carrying outcomes
+   * 1/2/3, then a child "okej" attached under nämen's outcome "1". Returns the
+   * root, the three nämen instances, and the just-attached okej. */
+  function namenSetup() {
+    idn = 0
+    const root = new TreeNode('G', 'chance', 'G')
+    const g1 = addOutcome(root, 'gA')
+    addOutcome(root, 'gB')
+    addOutcome(root, 'gC')
+    const namen = new TreeNode('namen', 'chance', 'nämen')
+    setChild(root, g1, namen)
+    // Grow the nämen group across the grandparent's other outcomes.
+    const [namen2, namen3] = mirrorLinkedInstances(root, root, namen, nextId)
+    // Give the nämen variable outcomes 1/2/3 (synced across all instances).
+    addOutcomeToGroup(root, namen, '1')
+    addOutcomeToGroup(root, namen, '2')
+    addOutcomeToGroup(root, namen, '3')
+    // Attach "okej" under nämen's outcome "1".
+    const okej = new TreeNode('okej', 'chance', 'okej')
+    setChild(namen, namen.outcomes.find((o) => o.label === '1')!, okej)
+    return { root, namen, namen2, namen3, okej }
+  }
+
+  it('mirrors "okej" across the full nämen × outcome grid as one linked group', () => {
+    const { root, namen, namen2, namen3, okej } = namenSetup()
+    const created = mirrorLinkedInstances(root, namen, okej, nextId)
+
+    // 3 nämen instances × 3 outcomes = 9 okej positions, minus the original = 8.
+    expect(created).toHaveLength(8)
+
+    // Every (nämen-instance × outcome) position now holds an okej instance,
+    // and every one shares okej's variableId, type, and base label.
+    for (const namenInstance of [namen, namen2, namen3]) {
+      for (const label of ['1', '2', '3']) {
+        const child = namenInstance.outcomes.find((o) => o.label === label)!.child
+        expect(child).not.toBeNull()
+        expect(child!.variableId).toBe(okej.variableId)
+        expect(child!.nodeType).toBe('chance')
+        expect(child!.label).toBe('okej')
+      }
+    }
+    // One group of nine with contiguous prime indices.
+    const okejGroup = collectGroup(root, okej.variableId)
+    expect(okejGroup).toHaveLength(9)
+    expect(okejGroup.map((n) => n.instanceIndex)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8])
+    expect(displayName(okejGroup[0])).toBe('okej')
+    expect(displayName(okejGroup[1])).toBe("okej'")
+    // The nämen group itself is untouched (still three instances).
+    expect(collectGroup(root, namen.variableId)).toHaveLength(3)
+  })
+
+  it('keeps okej probabilities independent per instance but syncs the outcome set', () => {
+    const { root, namen, namen2, okej } = namenSetup()
+    mirrorLinkedInstances(root, namen, okej, nextId)
+
+    // Add an outcome on one okej instance -> propagates to all nine.
+    addOutcomeToGroup(root, okej, 'a')
+    for (const n of collectGroup(root, okej.variableId)) {
+      expect(n.outcomes.some((o) => o.label === 'a')).toBe(true)
+    }
+    // Probabilities stay per-instance.
+    okej.outcomes[0].probability = 0.9
+    const other = namen2.outcomes.find((o) => o.label === '1')!.child!
+    expect(Number.isNaN(other.outcomes[0].probability)).toBe(true)
+  })
+
+  it('does not overwrite a diverged branch when mirroring (no-overwrite at depth)', () => {
+    const { root, namen, namen2, okej } = namenSetup()
+    // Before mirroring okej, build a DIFFERENT structure under nämen':1.
+    const jaha = new TreeNode('jaha', 'decision', 'jahå')
+    setChild(namen2, namen2.outcomes.find((o) => o.label === '1')!, jaha)
+
+    mirrorLinkedInstances(root, namen, okej, nextId)
+
+    // nämen':1 keeps "jahå" — not clobbered by the okej mirror.
+    expect(namen2.outcomes.find((o) => o.label === '1')!.child).toBe(jaha)
+    // The other nämen':2 / nämen':3 positions still got okej instances.
+    expect(namen2.outcomes.find((o) => o.label === '2')!.child!.label).toBe('okej')
+  })
+
+  it('granular unlink at depth frees only that branch, leaving parents and siblings intact', () => {
+    const { root, namen, namen2, okej } = namenSetup()
+    mirrorLinkedInstances(root, namen, okej, nextId)
+    const okejVar = okej.variableId
+
+    // Unlink the nested okej instance under nämen':1.
+    const nested = namen2.outcomes.find((o) => o.label === '1')!.child!
+    unlinkNode(root, nested)
+
+    // The nested one is now its own independent variable.
+    expect(nested.variableId).toBe(nested.id)
+    expect(collectGroup(root, nested.variableId)).toHaveLength(1)
+    // nämen' is unaffected — still linked to nämen/nämen''.
+    expect(namen2.variableId).toBe(namen.variableId)
+    expect(collectGroup(root, namen.variableId)).toHaveLength(3)
+    // okej and the remaining seven are still one group (nine minus the freed one).
+    expect(collectGroup(root, okejVar)).toHaveLength(8)
+    expect(okej.variableId).toBe(okejVar)
+    // Editing the okej group no longer reaches the unlinked branch.
+    addOutcomeToGroup(root, okej, 'z')
+    expect(nested.outcomes.some((o) => o.label === 'z')).toBe(false)
+    expect(collectGroup(root, okejVar).every((n) => n.outcomes.some((o) => o.label === 'z'))).toBe(
+      true,
+    )
+  })
+
+  it('composes through depth: a third level mirrors across the whole grid', () => {
+    const { root, namen, okej } = namenSetup()
+    mirrorLinkedInstances(root, namen, okej, nextId) // level 2 grid: 9 okej
+
+    // Give okej outcomes p/q (synced across all nine), then add a third-level
+    // node "foo" under okej's outcome "p".
+    addOutcomeToGroup(root, okej, 'p')
+    addOutcomeToGroup(root, okej, 'q')
+    const foo = new TreeNode('foo', 'chance', 'foo')
+    setChild(okej, okej.outcomes.find((o) => o.label === 'p')!, foo)
+    const created = mirrorLinkedInstances(root, okej, foo, nextId)
+
+    // okej group = 9 instances × 2 outcomes = 18 foo positions, minus original.
+    expect(created).toHaveLength(17)
+    const fooGroup = collectGroup(root, foo.variableId)
+    expect(fooGroup).toHaveLength(18)
+    // Every okej instance has a foo under both p and q.
+    for (const okejInstance of collectGroup(root, okej.variableId)) {
+      for (const label of ['p', 'q']) {
+        expect(okejInstance.outcomes.find((o) => o.label === label)!.child!.label).toBe('foo')
+      }
+    }
+  })
+
+  it('flip/VOC treats a nested linked group identically (variableId-based, no bayesReversal change)', () => {
+    // Root chance "Väder"(Regn/Sol) -> decision "Bet"(Ja/Nej) mirrored across
+    // both; under Bet's "Ja" a chance "Utfall"(Vinst/Förlust) mirrored across
+    // all Bet instances. Deeply nested linked groups must flip without error.
+    idn = 0
+    const root = new TreeNode('root', 'chance', 'Väder')
+    const regn = addOutcome(root, 'Regn', 0.5)
+    addOutcome(root, 'Sol', 0.5)
+    const bet = new TreeNode('bet', 'decision', 'Bet')
+    setChild(root, regn, bet)
+    mirrorLinkedInstances(root, root, bet, nextId) // Bet' under Sol
+    addOutcomeToGroup(root, bet, 'Ja')
+    addOutcomeToGroup(root, bet, 'Nej')
+    // "Nej" terminates with a payoff on each Bet instance.
+    for (const b of collectGroup(root, bet.variableId)) {
+      b.outcomes.find((o) => o.label === 'Nej')!.value = 3
+    }
+    // Chance "Utfall" under Bet:Ja, mirrored across both Bet instances.
+    const utfall = new TreeNode('utf', 'chance', 'Utfall')
+    setChild(bet, bet.outcomes.find((o) => o.label === 'Ja')!, utfall)
+    mirrorLinkedInstances(root, bet, utfall, nextId)
+    addOutcomeToGroup(root, utfall, 'Vinst')
+    addOutcomeToGroup(root, utfall, 'Förlust')
+    // Fill terminal payoffs + probabilities on every Utfall instance.
+    for (const u of collectGroup(root, utfall.variableId)) {
+      const v = u.outcomes.find((o) => o.label === 'Vinst')!
+      const f = u.outcomes.find((o) => o.label === 'Förlust')!
+      v.probability = 0.6
+      v.value = 10
+      f.probability = 0.4
+      f.value = 0
+    }
+
+    // Väder (chance) already precedes the Bet decision, so flip is a no-op:
+    // VOC = 0, no FlipError — the nested Utfall/Bet linked groups are each
+    // recognized as one variable by their shared variableId.
+    const result = reverseTreeWithBayes(root)
+    expect(Number.isFinite(result.originalEv)).toBe(true)
+    expect(result.voc).toBe(0)
+  })
+
+  it('is a bounded single pass on a deep tree (no unbounded cascade, no hang)', () => {
+    idn = 0
+    const root = new TreeNode('r', 'chance', 'V0')
+    addOutcome(root, 'a')
+    addOutcome(root, 'b')
+    // Build 5 nested levels, each: attach a chance node under the current
+    // level's first outcome, mirror across the grid, then give it two outcomes.
+    let level: TreeNode = root
+    const start = Date.now()
+    for (let depth = 1; depth <= 5; depth++) {
+      const child = new TreeNode(`v${depth}`, 'chance', `V${depth}`)
+      setChild(level, level.outcomes.find((o) => o.child === null)!, child)
+      mirrorLinkedInstances(root, level, child, nextId)
+      addOutcome(child, 'a')
+      addOutcomeToGroup(root, child, 'b')
+      level = child
+    }
+    const elapsed = Date.now() - start
+    // Must finish quickly (well under a second) and produce a finite structure.
+    expect(elapsed).toBeLessThan(1000)
+    // Node count is bounded (2^depth-ish per level), not infinite.
+    expect(allNodes(root).length).toBeLessThan(500)
   })
 })
 

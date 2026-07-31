@@ -87,29 +87,47 @@ function typeLabel(t: NodeType): string {
 }
 
 /** After a child is attached under one of `parent`'s outcomes, proactively
- * fills every OTHER still-terminal outcome of the same parent with a linked
- * instance of that child — so the same variable "grows" across all sibling
- * branches without the user repeating the setup on each. Each new instance
- * shares `template`'s variableId (via createLinkedNode's name match), its
- * outcome SET and node type, but its own probabilities/conditional tables.
+ * mirrors it across the whole grid of positions that should hold the same
+ * variable — so a nested linked structure grows in lock-step without the user
+ * repeating the setup on every branch and every parent instance.
  *
- * Fires exactly once per creation event and one level deep: it only fills
- * this parent's immediate terminal siblings (each new instance starts
- * childless), so it can't cascade or recurse unboundedly. Non-terminal
- * siblings — already-built or previously-unlinked structure — are left
- * untouched. Returns the instances created (empty if none). */
-export function autoFillLinkedSiblings(
+ * The grid is `group(parent) × outcomes`: for every instance of `parent`'s
+ * variable (parent itself plus its linked siblings P', P'', …) and every one
+ * of that instance's still-terminal outcomes, a linked instance of `template`
+ * is created. That single sweep covers both dimensions the previous one-level
+ * fill missed:
+ *  - parent's own other terminal outcomes (the original task-#12 behavior), and
+ *  - the corresponding outcomes on parent's linked sibling instances.
+ * Outcome correspondence across instances is by label — the same key the
+ * outcome-set sync already uses — and linked instances always carry identical
+ * label sets, so iterating each instance's own outcomes needs no separate
+ * position map. Every created node joins `template`'s own variable group
+ * (shared variableId via createLinkedNode's name match), so N/N'/N''… are one
+ * synced group, exactly like parent's.
+ *
+ * It runs as ONE bounded pass (|group| × |outcomes|), never a tree-wide walk.
+ * No in-pass recursion is needed: a freshly-created node is childless, so
+ * there is nothing deeper to mirror yet — depth composes naturally because
+ * every later node-creation event fires this same handler once for its own
+ * group. Non-terminal outcomes (already-built or unlinked/diverged structure)
+ * are skipped, which also guards against overwriting or double-filling.
+ * Returns the instances created (empty if none). */
+export function mirrorLinkedInstances(
   root: TreeNode,
   parent: TreeNode,
   template: TreeNode,
   nextId: () => string,
 ): TreeNode[] {
   const created: TreeNode[] = []
-  for (const edge of parent.outcomes) {
-    if (edge.child) continue // skip the just-attached child and any existing structure
-    const instance = createLinkedNode(root, nextId(), template.nodeType, template.label)
-    setChild(parent, edge, instance)
-    created.push(instance)
+  // Snapshot the parent group up front; created nodes join template's group,
+  // not parent's, so this list is stable across the sweep.
+  for (const instance of collectGroup(root, parent.variableId)) {
+    for (const edge of instance.outcomes) {
+      if (edge.child) continue // skip the just-attached child and any existing/diverged structure
+      const node = createLinkedNode(root, nextId(), template.nodeType, template.label)
+      setChild(instance, edge, node)
+      created.push(node)
+    }
   }
   return created
 }

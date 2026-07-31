@@ -9,7 +9,7 @@ import {
 import type { ConditionalRow } from '../model/tree'
 import {
   addOutcomeToGroup,
-  autoFillLinkedSiblings,
+  mirrorLinkedInstances,
   createLinkedNode,
   groupSiblings,
   removeOutcomeFromGroup,
@@ -378,19 +378,22 @@ export function createApp(
       setChild(node, edge, child)
       state.selected = child
       markDirty()
-      // Proactively grow the same variable across the parent's other terminal
-      // outcomes, so the user doesn't repeat the setup on every branch. Only
-      // under chance parents — a chance variable recurs across its contexts;
-      // decision alternatives are deliberately asymmetric (act vs. don't act),
-      // so auto-filling them would fight the classic decision-tree shape.
+      // Proactively grow the same variable across the whole grid of positions
+      // that should hold it: the parent's other terminal outcomes AND — when
+      // the parent itself is a linked instance — the corresponding outcomes on
+      // its sibling instances, all joining one linked group. Only under chance
+      // parents: a chance variable recurs across its contexts, whereas decision
+      // alternatives are deliberately asymmetric (act vs. don't act), so
+      // auto-filling them would fight the classic decision-tree shape.
       const autoFilled =
         state.root && node.nodeType === 'chance'
-          ? autoFillLinkedSiblings(state.root, node, child, nextId)
+          ? mirrorLinkedInstances(state.root, node, child, nextId)
           : []
       if (autoFilled.length > 0) {
-        const names = [child, ...autoFilled].map((n) => `"${displayName(n)}"`).join(', ')
+        const shown = [child, ...autoFilled].slice(0, 6).map((n) => `"${displayName(n)}"`).join(', ')
+        const more = autoFilled.length + 1 > 6 ? ` (+${autoFilled.length + 1 - 6} till)` : ''
         setMessage(
-          `Länkade instanser skapade under övriga utfall: ${names}. ` +
+          `Länkade instanser skapade: ${shown}${more}. ` +
             `Utfallsuppsättningen och nodtypen synkas automatiskt; sannolikheter är egna per instans.`,
         )
       } else if (child.instanceIndex > 0) {

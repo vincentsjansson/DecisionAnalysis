@@ -534,11 +534,50 @@ describe('createApp', () => {
     expect(labels).toEqual(expect.arrayContaining(['test', 'Hej', "Hej'", "Hej''", "Hej'''"]))
     // The user is told several linked instances were created.
     expect((container.querySelector('.message-strip') as HTMLElement).textContent).toContain(
-      'Länkade instanser skapade under övriga utfall',
+      'Länkade instanser skapade',
     )
     // Adding an outcome on Hej propagates to all instances (synced set).
     app.api.addOutcomeTo(hej, 'x', 0.5, 3)
     for (const c of children) expect(c!.outcomes.some((o) => o.label === 'x')).toBe(true)
+  })
+
+  it('mirrors a nested variable across the whole parent-instance grid (deep screenshot scenario)', () => {
+    const { app } = newApp()
+    // Grandparent chance "G" with three outcomes -> "nämen" grows to 3 linked
+    // instances under G's outcomes.
+    const g = app.api.createRoot('chance', 'G')
+    const ga = app.api.addOutcomeTo(g, 'gA', 0.34)
+    app.api.addOutcomeTo(g, 'gB', 0.33)
+    app.api.addOutcomeTo(g, 'gC', 0.33)
+    const namen = app.api.attachChild(g, ga, 'chance', 'nämen')
+    // nämen now has three linked instances; give the variable outcomes 1/2/3.
+    app.api.addOutcomeTo(namen, '1', 0.5)
+    app.api.addOutcomeTo(namen, '2', 0.25)
+    app.api.addOutcomeTo(namen, '3', 0.25)
+
+    // Add "okej" under nämen's outcome "1" — should mirror across the whole
+    // 3 nämen-instances × 3 outcomes grid.
+    const namenOne = namen.outcomes.find((o) => o.label === '1')!
+    const okej = app.api.attachChild(namen, namenOne, 'chance', 'okej')
+
+    // Collect every node labelled "okej": expect nine, all one variable group.
+    const collect = (n: TreeNode, out: TreeNode[] = []): TreeNode[] => {
+      out.push(n)
+      for (const o of n.outcomes) if (o.child) collect(o.child, out)
+      return out
+    }
+    const okejNodes = collect(app.state.root!).filter((n) => n.label === 'okej')
+    expect(okejNodes).toHaveLength(9)
+    expect(new Set(okejNodes.map((n) => n.variableId)).size).toBe(1)
+    expect(okej.variableId).toBe(okejNodes[0].variableId)
+    // Each nämen instance has an okej under all three of its outcomes.
+    const namenInstances = collect(app.state.root!).filter((n) => n.label === 'nämen')
+    expect(namenInstances).toHaveLength(3)
+    for (const ni of namenInstances) {
+      for (const label of ['1', '2', '3']) {
+        expect(ni.outcomes.find((o) => o.label === label)!.child!.label).toBe('okej')
+      }
+    }
   })
 
   it('does NOT auto-fill under a decision parent (asymmetric decisions preserved)', () => {
