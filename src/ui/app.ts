@@ -9,12 +9,15 @@ import {
 import type { ConditionalRow } from '../model/tree'
 import {
   addOutcomeToGroup,
+  adoptGroupProbabilities,
   mirrorLinkedInstances,
   createLinkedNode,
   groupSiblings,
   removeOutcomeFromGroup,
   renameOutcomeInGroup,
   renameVariable,
+  setNodeTypeInGroup,
+  syncProbabilitiesFromNode,
   unlinkNode,
 } from '../model/variable'
 import { backwardFill } from '../model/backwardFill'
@@ -423,7 +426,8 @@ export function createApp(
         const more = autoFilled.length + 1 > 6 ? ` (+${autoFilled.length + 1 - 6} till)` : ''
         setMessage(
           `Länkade instanser skapade: ${shown}${more}. ` +
-            `Utfallsuppsättningen och nodtypen synkas automatiskt; sannolikheter är egna per instans.`,
+            `Utfallsuppsättning, nodtyp och sannolikheter synkas automatiskt ` +
+            `(en instans med egen villkorstabell styr sina egna sannolikheter).`,
         )
       } else if (child.instanceIndex > 0) {
         setMessage(
@@ -436,7 +440,11 @@ export function createApp(
     },
 
     toggleType(node) {
-      node.nodeType = node.nodeType === 'chance' ? 'decision' : 'chance'
+      const next = node.nodeType === 'chance' ? 'decision' : 'chance'
+      // Node type is a variable-group invariant — propagate to every linked
+      // instance (frikopplade instances have their own variableId, untouched).
+      if (state.root) setNodeTypeInGroup(state.root, node, next)
+      else node.nodeType = next
       markDirty()
       render()
     },
@@ -483,7 +491,18 @@ export function createApp(
     },
 
     setConditionalTable(node, rows) {
+      const hadTable = node.conditionalTable.length > 0
       node.conditionalTable = rows
+      const root = state.root ?? node
+      if (rows.length === 0 && hadTable) {
+        // Table removed -> rejoin flat-probability sync by adopting the group's
+        // shared distribution from a no-table sibling.
+        adoptGroupProbabilities(root, node)
+      } else if (rows.length === 0) {
+        // No table before or after: base-probability edits sync to the group.
+        syncProbabilitiesFromNode(root, node)
+      }
+      // rows.length > 0: node is now context-driven and opts out of flat sync.
       markDirty()
       render()
     },
@@ -774,7 +793,8 @@ export function createApp(
       note.className = 'sync-note'
       note.textContent =
         `Detta påverkar även: ${siblings.map((n) => displayName(n)).join(', ')} ` +
-        `(utfallsuppsättningen synkas; sannolikheter är egna per instans).`
+        `(utfallsuppsättning och sannolikheter synkas; en instans med egen ` +
+        `villkorstabell styr sina egna sannolikheter).`
       body.appendChild(note)
     }
 
@@ -894,8 +914,9 @@ export function createApp(
             }
 
             // All edits route through the group-aware model functions so the
-            // outcome set stays synced across every linked instance (labels
-            // only — probabilities remain per-instance).
+            // outcome set stays synced across every linked instance. As of the
+            // 2026-08-02 design change, probability *values* also sync across
+            // the group's no-table instances (see syncProbabilitiesFromNode).
             const root = state.root ?? node
             for (const r of rows) {
               if (r.removed && r.edge) removeOutcomeFromGroup(root, node, r.edge)
@@ -912,6 +933,9 @@ export function createApp(
                 addOutcomeToGroup(root, node, label, prob)
               }
             }
+            // Push this instance's flat probabilities to the rest of the group
+            // (no-op if this instance is conditional-table-driven).
+            syncProbabilitiesFromNode(root, node)
             markDirty()
             closeDialog()
             render()

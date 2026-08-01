@@ -8,14 +8,18 @@ import {
 } from './tree'
 import {
   addOutcomeToGroup,
+  adoptGroupProbabilities,
   allNodes,
   mirrorLinkedInstances,
   collectGroup,
   createLinkedNode,
   groupSiblings,
+  hasConditionalTable,
   removeOutcomeFromGroup,
   renameOutcomeInGroup,
   renameVariable,
+  setNodeTypeInGroup,
+  syncProbabilitiesFromNode,
   unlinkNode,
   VariableConflictError,
 } from './variable'
@@ -112,17 +116,72 @@ describe('outcome-set sync across a group', () => {
     expect(b.conditionalTable[0].probabilities).toEqual({ Y: 0.6 })
   })
 
-  it('keeps probabilities independent per instance (only the set is shared)', () => {
+  // DESIGN CHANGE 2026-08-02: probabilities now sync across the group by
+  // default (previously independent per instance) so a tree is filled once.
+  it('syncs probabilities across the group by default', () => {
     const { root, a, b } = linkedPair()
     addOutcomeToGroup(root, a, 'X')
     addOutcomeToGroup(root, a, 'Y')
     a.outcomes[0].probability = 0.9
     a.outcomes[1].probability = 0.1
-    b.outcomes[0].probability = 0.5
-    b.outcomes[1].probability = 0.5
-    // Editing labels does not touch the other instance's probabilities.
+    syncProbabilitiesFromNode(root, a)
+    // The sibling adopts a's flat distribution (matched by label).
+    expect(b.outcomes.map((o) => o.probability)).toEqual([0.9, 0.1])
+  })
+
+  it('a conditional-table instance opts out of probability sync (both directions)', () => {
+    const { root, a, b } = linkedPair()
+    addOutcomeToGroup(root, a, 'X')
+    addOutcomeToGroup(root, a, 'Y')
+    // b becomes context-driven.
+    b.conditionalTable = [{ condition: new Set(['root:No']), probabilities: { X: 0.4, Y: 0.6 } }]
+    b.outcomes[0].probability = 0.4
+    b.outcomes[1].probability = 0.6
+    expect(hasConditionalTable(b)).toBe(true)
+
+    // a's edit must NOT overwrite b (b is table-driven)...
+    a.outcomes[0].probability = 0.9
+    a.outcomes[1].probability = 0.1
+    syncProbabilitiesFromNode(root, a)
+    expect(b.outcomes.map((o) => o.probability)).toEqual([0.4, 0.6])
+
+    // ...and b's own edit must NOT push to a either.
+    b.outcomes[0].probability = 0.2
+    syncProbabilitiesFromNode(root, b)
     expect(a.outcomes.map((o) => o.probability)).toEqual([0.9, 0.1])
-    expect(b.outcomes.map((o) => o.probability)).toEqual([0.5, 0.5])
+  })
+
+  it('re-adopts the group distribution when a conditional table is removed', () => {
+    const { root, a, b } = linkedPair()
+    addOutcomeToGroup(root, a, 'X')
+    addOutcomeToGroup(root, a, 'Y')
+    a.outcomes[0].probability = 0.7
+    a.outcomes[1].probability = 0.3
+    syncProbabilitiesFromNode(root, a)
+    // b diverges via a table, then drops it.
+    b.conditionalTable = [{ condition: new Set(['root:No']), probabilities: { X: 0.4, Y: 0.6 } }]
+    b.outcomes[0].probability = 0.4
+    b.outcomes[1].probability = 0.6
+    b.conditionalTable = []
+    adoptGroupProbabilities(root, b)
+    expect(b.outcomes.map((o) => o.probability)).toEqual([0.7, 0.3])
+  })
+
+  it('propagates a node-type change to every instance in the group', () => {
+    const { root, a, b } = linkedPair()
+    expect(a.nodeType).toBe('chance')
+    expect(b.nodeType).toBe('chance')
+    setNodeTypeInGroup(root, b, 'decision')
+    expect(a.nodeType).toBe('decision')
+    expect(b.nodeType).toBe('decision')
+  })
+
+  it('a node-type change does NOT touch an explicitly unlinked instance', () => {
+    const { root, a, b } = linkedPair()
+    unlinkNode(root, b) // b becomes its own variable
+    setNodeTypeInGroup(root, a, 'decision')
+    expect(a.nodeType).toBe('decision')
+    expect(b.nodeType).toBe('chance') // untouched
   })
 })
 
@@ -245,7 +304,7 @@ describe('mirrorLinkedInstances — grow the same variable across the parent gro
     expect(children.map((c) => displayName(c))).toEqual(['Hej', "Hej'", "Hej''", "Hej'''"])
   })
 
-  it('syncs the outcome set but keeps probabilities independent per instance', () => {
+  it('copies the outcome set on mirror; a fresh instance starts with unset probabilities', () => {
     const { test, hej } = screenshotSetup()
     // Give Hej its own outcomes BEFORE auto-fill so the set is copied in.
     addOutcome(hej, 'a', 0.6)
@@ -253,8 +312,12 @@ describe('mirrorLinkedInstances — grow the same variable across the parent gro
     const [hej2] = mirrorLinkedInstances(test, test, hej, nextId)
 
     expect(hej2.outcomes.map((o) => o.label)).toEqual(['a', 'b'])
-    // Probabilities are NOT copied — the sibling starts unset.
+    // A freshly mirrored instance starts unset — probability *values* flow in
+    // later via syncProbabilitiesFromNode when any instance is edited (the
+    // instances all exist first, so one fill reaches the whole group).
     expect(hej2.outcomes.every((o) => Number.isNaN(o.probability))).toBe(true)
+    syncProbabilitiesFromNode(test, hej)
+    expect(hej2.outcomes.map((o) => o.probability)).toEqual([0.6, 0.4])
     // And later adding an outcome on any instance propagates to the group.
     addOutcomeToGroup(test, hej2, 'c')
     expect(hej.outcomes.some((o) => o.label === 'c')).toBe(true)
@@ -388,19 +451,22 @@ describe('mirrorLinkedInstances — nested cross-instance mirroring', () => {
     expect(collectGroup(root, namen.variableId)).toHaveLength(3)
   })
 
-  it('keeps okej probabilities independent per instance but syncs the outcome set', () => {
+  it('syncs both the outcome set and probabilities across all nine okej instances', () => {
     const { root, namen, namen2, okej } = namenSetup()
     mirrorLinkedInstances(root, namen, okej, nextId)
 
     // Add an outcome on one okej instance -> propagates to all nine.
     addOutcomeToGroup(root, okej, 'a')
+    addOutcomeToGroup(root, okej, 'b')
     for (const n of collectGroup(root, okej.variableId)) {
-      expect(n.outcomes.some((o) => o.label === 'a')).toBe(true)
+      expect(n.outcomes.map((o) => o.label)).toEqual(['a', 'b'])
     }
-    // Probabilities stay per-instance.
+    // Fill probabilities once on any instance -> the whole nested group adopts them.
     okej.outcomes[0].probability = 0.9
+    okej.outcomes[1].probability = 0.1
+    syncProbabilitiesFromNode(root, okej)
     const other = namen2.outcomes.find((o) => o.label === '1')!.child!
-    expect(Number.isNaN(other.outcomes[0].probability)).toBe(true)
+    expect(other.outcomes.map((o) => o.probability)).toEqual([0.9, 0.1])
   })
 
   it('does not overwrite a diverged branch when mirroring (no-overwrite at depth)', () => {

@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import type { TreeNode } from '../model/tree'
 import { validateProbabilities } from '../model/validateProbabilities'
+import { collectGroup } from '../model/variable'
 import { createApp, distributeSumToOne } from './app'
 
 function newApp(confirmAnswer = true) {
@@ -828,6 +829,109 @@ describe('createApp', () => {
     it('leaves a single outcome at 1 and handles the empty case', () => {
       expect(distributeSumToOne([1])).toEqual([1])
       expect(distributeSumToOne([])).toEqual([])
+    })
+  })
+
+  describe('linked-instance sync through the UI (2026-08-02 regressions)', () => {
+    // Builds a chance root "namen" (outcomes 1/2/3) with a linked "okejdå"
+    // group auto-mirrored under every outcome — the screenshot setup.
+    function linkedOkejdaGroup(app: ReturnType<typeof newApp>['app']) {
+      const namen = app.api.createRoot('chance', 'namen')
+      const e1 = app.api.addOutcomeTo(namen, '1', 1 / 3)
+      app.api.addOutcomeTo(namen, '2', 1 / 3)
+      app.api.addOutcomeTo(namen, '3', 1 / 3)
+      const okej = app.api.attachChild(namen, e1, 'chance', 'okejdå')
+      return { namen, okej }
+    }
+
+    it('REGRESSION #2: toggleType on one instance propagates to the whole group', () => {
+      const { app } = newApp()
+      const { namen, okej } = linkedOkejdaGroup(app)
+      const group = collectGroup(namen, okej.variableId)
+      expect(group.length).toBe(3)
+      expect(group.every((n) => n.nodeType === 'chance')).toBe(true)
+
+      app.api.toggleType(okej) // change ONE instance
+
+      expect(group.every((n) => n.nodeType === 'decision')).toBe(true)
+    })
+
+    it('a type change skips an explicitly unlinked instance', () => {
+      const { app } = newApp()
+      const { namen, okej } = linkedOkejdaGroup(app)
+      const group = collectGroup(namen, okej.variableId)
+      const odd = group.find((n) => n !== okej)!
+      app.api.unlinkVariable(odd) // odd becomes its own variable
+
+      app.api.toggleType(okej)
+
+      expect(okej.nodeType).toBe('decision')
+      expect(odd.nodeType).toBe('chance') // untouched
+    })
+
+    it('DESIGN #1: editing probabilities in the outcomes dialog syncs the group', () => {
+      const { app, container } = newApp()
+      const { namen, okej } = linkedOkejdaGroup(app)
+      app.api.addOutcomeTo(okej, 'jag', NaN)
+      app.api.addOutcomeTo(okej, 'du', NaN)
+
+      // Open okejdå's outcomes dialog, set probabilities, Save.
+      app.api.selectNode(okej)
+      container
+        .querySelector('[data-node-id="' + okej.id + '"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      ;[...container.querySelectorAll('.menu-item')]
+        .find((b) => b.textContent!.includes('Redigera utfall'))!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      const probInputs = [...container.querySelectorAll('.dialog input.prob')] as HTMLInputElement[]
+      probInputs[0].value = '0.7'
+      probInputs[1].value = '0.3'
+      ;[...container.querySelectorAll('.dialog button')]
+        .find((b) => b.textContent === 'Spara')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+      // Every no-table instance in the group adopted 0.7 / 0.3.
+      for (const inst of collectGroup(namen, okej.variableId)) {
+        expect(inst.outcomes.map((o) => o.probability)).toEqual([0.7, 0.3])
+      }
+    })
+
+    it('DESIGN #1: an instance with a conditional table opts out of probability sync', () => {
+      const { app, container } = newApp()
+      const { namen, okej } = linkedOkejdaGroup(app)
+      app.api.addOutcomeTo(okej, 'jag', 0.5)
+      app.api.addOutcomeTo(okej, 'du', 0.5)
+      const group = collectGroup(namen, okej.variableId)
+      const tabled = group.find((n) => n !== okej)!
+      // Give one sibling a conditional table (context-driven).
+      app.api.setConditionalTable(tabled, [
+        { condition: new Set(['namen:2']), probabilities: { jag: 0.9, du: 0.1 } },
+      ])
+      tabled.outcomes[0].probability = 0.9
+      tabled.outcomes[1].probability = 0.1
+
+      // Edit okej's probabilities via the dialog.
+      app.api.selectNode(okej)
+      container
+        .querySelector('[data-node-id="' + okej.id + '"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      ;[...container.querySelectorAll('.menu-item')]
+        .find((b) => b.textContent!.includes('Redigera utfall'))!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      const probInputs = [...container.querySelectorAll('.dialog input.prob')] as HTMLInputElement[]
+      probInputs[0].value = '0.2'
+      probInputs[1].value = '0.8'
+      ;[...container.querySelectorAll('.dialog button')]
+        .find((b) => b.textContent === 'Spara')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+      // The table-driven instance kept its own probabilities...
+      expect(tabled.outcomes.map((o) => o.probability)).toEqual([0.9, 0.1])
+      // ...while the other no-table instances synced to 0.2 / 0.8.
+      for (const inst of group) {
+        if (inst === tabled) continue
+        expect(inst.outcomes.map((o) => o.probability)).toEqual([0.2, 0.8])
+      }
     })
   })
 })

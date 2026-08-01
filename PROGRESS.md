@@ -4,6 +4,34 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-02 (segment 16) — DESIGNÄNDRING: sannolikhetssynk + två länkade-grupp-buggar
+
+Live-testning avslöjade tre saker: en **designändring** (inte buggfix) och två regressioner/buggar. Alla tre live-reproducerade och verifierade efter fix (JS-driven DOM mot den körande appen, då browser-panelen inte komponerar skärmdumpar).
+
+### 1. DESIGNÄNDRING — sannolikheter synkas nu över länkade instanser (ändrar tidigare beslut)
+
+**Motivering (användarens ord):** tidigare regel ("sannolikheter är egna per instans") gjorde verktyget för långsamt — man tvingades upprepa samma sannolikheter på varje länkad instans. Idén är att bygga träd snabbt och fylla i **en gång**.
+
+**Ny regel:** platta utfallssannolikheter synkas som standard över gruppen (`syncProbabilitiesFromNode`), precis som utfallsuppsättning och nodtyp. Undantag: en instans med egen `conditional_table` blir kontextberoende och slutar automatiskt synka (varken skickar eller tar emot) — utan separat "Koppla loss". Tas tabellen bort återgår instansen till synk och antar gruppens delade fördelning (`adoptGroupProbabilities`). "Koppla loss" (`unlinkNode`) förblir den drastiska mekanismen som bryter allt. **Live-verifierat:** satte jag=0.7/du=0.3 på en okejdå-instans → båda syskonen antog 0.7/0.3.
+
+### 2. REGRESSION — nodtyp-synk trasig
+
+**Root cause:** `api.toggleType` satte bara `node.nodeType` på den enskilda noden — anropade aldrig gruppsynk (till skillnad från skapande/mirroring som håller typen invariant). En instans kunde bli beslutsnod medan syskonen förblev slumpnoder, trots att UI:t lovar typsynk. **Fix:** `toggleType` → `setNodeTypeInGroup` (propagerar till hela gruppen; frikopplade instanser med eget `variableId` lämnas orörda). **Live-verifierat:** typ-ändring på en av tre okejdå-instanser → alla tre blev rektanglar (beslutsnoder), roten namen förblev ellips.
+
+### 3. BUGG — flip/Bayes-omvändning för länkade grupper
+
+**Undersökning (reproducerat isolerat med modell-lagret):** algoritmen är faktiskt **redan korrekt**. Två länkade chansnoder utan beslut → korrekt no-op (VOC=0). Beslut → länkad chansgrupp med **samma** fördelning → viks korrekt ihop till EN gemensam rotnod (klarsyns-strukturen). Beslut → grupp med **olika** fördelningar → failar loud (`FlipError` "fördelningen skiljer sig mellan grenar"), vilket är korrekt (klarsyn odefinierad när slumpfördelning beror på beslut).
+
+**Root cause för det upplevda felet:** den struktur användaren såg (okejdå som rot, beslutet duplicerat under varje utfall) är den **matematiskt korrekta** Bayes-omvändningen. Med gamla designen (oberoende sannolikheter) hade de tre instanserna olika fördelningar → flip kastade fel eller gav en förvirrande fold. **Designändring #1 är själva fixen:** synkade sannolikheter gör att en grupp utan villkorstabell garanterat delar en fördelning, så hopvikningen är entydig. **Reversal-algoritmen skrevs INTE om** (den var korrekt; att röra den vore onödig risk). **Live-verifierat:** beslut namen → länkad okejdå-grupp, flip → höger träd har exakt 3 noder: EN okejdå-rot + namen duplicerat under jag/du.
+
+**Blandade fallet (villkorstabell på en instans i en länkad grupp):** väldefinierade tabeller (beror på chans-förfader, konsekvent över beslutsgrenar) hanteras korrekt via `chanceContextKey` — täcks av scenario 2 (VOC=1, instanserna länkade). En instans vars tabell gör fördelningen beslutsberoende → failar loud. Ingen tyst felaktig siffra är möjlig, så jag bedömde att fråga inte behövdes.
+
+**Testresultat:** 206 gröna (+6). Nya: modell-synk (prob-synk default, villkorstabell opt-out åt båda håll, re-adopt vid borttagning, typ-synk propagering + frikopplad-instans skippas), app-nivå regressionstester (toggleType via api propagerar; prob-synk via utfallsdialogen; villkorstabell-instans opt-out), och flip-scenario 6 (hopvikning till en nod + fail-loud vid beslutsberoende fördelning). Tre gamla "oberoende"-tester **medvetet omskrivna** till nya synk-beteendet (inte raderade). `tsc` + build rena.
+
+**Judgment calls:** (1) Skrev **inte** om reversal-algoritmen — den var redan korrekt; designändringen levererar fixen. (2) Nyskapade instanser startar fortfarande med osatta sannolikheter (synkas vid nästa redigering, som når alla redan skapade instanser) — enklare än att kopiera värden vid skapande, och "fyll en gång"-målet uppnås ändå. (3) Committat direkt på `main`: avgränsat scope (modellsynk-funktioner + UI-wiring + docs + tester), samma mönster som senaste segmenten.
+
+---
+
 ## 2026-08-01 (segment 15) — Normalisera: repeterande decimaler summerar till exakt 1
 
 **Bakgrund:** Jämn fördelning av sannolikheter som ger oändliga decimaler (⅓ = 0,333333…, ⅙ = 0,166666…) föll utanför Σ=1-valideringen: "Normalisera" avrundade varje värde till 6 värdesiffror, så tre 0,333333 summerade till 0,999999 → `|0,999999 − 1| ≈ 1,0000e-6`, precis *över* toleransen `1e-6` → Σ-felet triggades.

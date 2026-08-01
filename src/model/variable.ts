@@ -132,9 +132,72 @@ export function mirrorLinkedInstances(
   return created
 }
 
+/** True when this instance's probabilities are governed by its own conditional
+ * table (context-dependent, path-driven) rather than the group's shared flat
+ * probability. Such an instance opts out of flat-probability sync automatically. */
+export function hasConditionalTable(node: TreeNode): boolean {
+  return node.conditionalTable.length > 0
+}
+
+/** Sets the node type on every instance in the variable group. Node type is a
+ * group invariant (all instances of one variable share a type), so a type
+ * change on any instance must propagate. Explicitly unlinked instances have
+ * their own `variableId` and are unaffected. */
+export function setNodeTypeInGroup(root: TreeNode, node: TreeNode, type: NodeType): void {
+  for (const instance of collectGroup(root, node.variableId)) {
+    instance.nodeType = type
+  }
+}
+
+/** Copies `node`'s flat outcome probabilities (matched by label) to every other
+ * instance in its group that has no conditional table. No-op when `node` itself
+ * has a conditional table — a context-dependent instance neither sends nor
+ * receives flat-probability sync. This is the default as of the 2026-08-02
+ * design change: linked instances share one distribution, so a tree is filled
+ * once instead of repeating the same probabilities on every instance. */
+export function syncProbabilitiesFromNode(root: TreeNode, node: TreeNode): void {
+  if (hasConditionalTable(node)) return
+  for (const instance of collectGroup(root, node.variableId)) {
+    if (instance === node || hasConditionalTable(instance)) continue
+    for (const edge of node.outcomes) {
+      const match = instance.outcomes.find((o) => o.label === edge.label)
+      if (match) match.probability = edge.probability
+    }
+  }
+}
+
+/** Sets one outcome's probability on `node` and syncs it (by label) across the
+ * group's no-table instances. Convenience wrapper over `syncProbabilitiesFromNode`
+ * for single-edge edits. */
+export function setProbabilityInGroup(
+  root: TreeNode,
+  node: TreeNode,
+  edge: Outcome,
+  probability: number,
+): void {
+  edge.probability = probability
+  syncProbabilitiesFromNode(root, node)
+}
+
+/** When an instance drops its conditional table it rejoins flat-probability
+ * sync: it adopts the group's shared flat probabilities from any no-table
+ * sibling. No-op when no such donor exists (every other instance is either
+ * absent or itself table-driven) — the node then keeps its current values. */
+export function adoptGroupProbabilities(root: TreeNode, node: TreeNode): void {
+  const donor = collectGroup(root, node.variableId).find(
+    (n) => n !== node && !hasConditionalTable(n),
+  )
+  if (!donor) return
+  for (const edge of node.outcomes) {
+    const match = donor.outcomes.find((o) => o.label === edge.label)
+    if (match) edge.probability = match.probability
+  }
+}
+
 /** Adds an outcome to `node` and propagates the same label (probability unset)
  * to every other instance in its variable group. Returns the outcome on
- * `node`. Probabilities are never synced — only the outcome set. */
+ * `node`. The outcome *set* is synced here; probability *values* sync
+ * separately via `syncProbabilitiesFromNode`. */
 export function addOutcomeToGroup(
   root: TreeNode,
   node: TreeNode,

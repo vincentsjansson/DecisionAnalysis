@@ -234,3 +234,58 @@ describe('flip/VOC — scenario 5: deep tree, mixed chance and decision', () => 
     expect(r.flippedEv).toBeGreaterThanOrEqual(r.originalEv - 1e-9)
   })
 })
+
+describe('flip/VOC — scenario 6: linked chance group folds into ONE shared node', () => {
+  /**
+   * The 2026-08-02 regression case, minimal (two linked instances, no nesting):
+   * hej(decision) A/B, and under each a linked chance "okejdå" with the SAME
+   * distribution (jag 0.5 / du 0.5) but branch-specific payoffs:
+   *   A: jag->2, du->8 ;  B: jag->4, du->6.
+   *
+   * Original (decide hej blind): A = 0.5·2+0.5·8 = 5 ; B = 0.5·4+0.5·6 = 5 -> 5.
+   * Flipped (learn okejdå, then decide hej):
+   *   okejdå=jag (0.5): max(A=2,B=4) = 4 ; okejdå=du (0.5): max(A=8,B=6) = 8
+   *   EV = 0.5·4 + 0.5·8 = 6. VOC = 1.
+   * The reversed tree must fold the linked group into ONE okejdå root, with hej
+   * as the (duplicated) decision under each okejdå outcome — not three separate
+   * okejdå nodes.
+   */
+  function build(sameDistr = true): TreeNode {
+    const hej = new TreeNode('hej', 'decision', 'hej')
+    const a = addOutcome(hej, 'A')
+    const b = addOutcome(hej, 'B')
+    const okA = new TreeNode('okA', 'chance', 'okejdå')
+    setChild(hej, a, okA)
+    addOutcome(okA, 'jag', 0.5, 2)
+    addOutcome(okA, 'du', 0.5, 8)
+    const okB = new TreeNode('okB', 'chance', 'okejdå')
+    setChild(hej, b, okB)
+    addOutcome(okB, 'jag', sameDistr ? 0.5 : 0.7, 4)
+    addOutcome(okB, 'du', sameDistr ? 0.5 : 0.3, 6)
+    relinkByName(hej) // links okA/okB into one variable
+    return hej
+  }
+
+  it('folds a same-distribution linked group into one root node (VOC = 1)', () => {
+    const r = reverseTreeWithBayes(build(true))
+    expect(r.originalEv).toBeCloseTo(5)
+    expect(r.flippedEv).toBeCloseTo(6)
+    expect(r.voc).toBeCloseTo(1)
+
+    // Structure: single "okejdå" chance root -> "hej" decision under each outcome.
+    expect(r.flipped.nodeType).toBe('chance')
+    expect(r.flipped.label).toBe('okejdå')
+    expect(r.flipped.outcomes.map((o) => o.label)).toEqual(['jag', 'du'])
+    for (const o of r.flipped.outcomes) {
+      expect(o.child?.nodeType).toBe('decision')
+      expect(o.child?.label).toBe('hej')
+    }
+  })
+
+  it('fails loud when the linked instances have decision-dependent distributions', () => {
+    // Different distributions across the decision branches means okejdå's
+    // outcome depends on the choice -> clairvoyance is undefined -> throw,
+    // rather than fabricating a folded node from inconsistent probabilities.
+    expect(() => reverseTreeWithBayes(build(false))).toThrow(/skiljer sig mellan grenar/)
+  })
+})
