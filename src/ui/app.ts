@@ -57,6 +57,15 @@ export interface AppState {
   dirty: boolean
 }
 
+/** One undo/redo history entry: the full document as JSON (deep clone via the
+ * tested serialize round-trip) plus the view-only bits that aren't part of a
+ * save file but must still be restored — split mode and the selected node. */
+interface Snapshot {
+  json: string
+  split: boolean
+  selectedId: string | null
+}
+
 export interface AppApi {
   createRoot(type: NodeType, label: string): TreeNode
   addOutcomeTo(node: TreeNode, label: string, probability?: number, value?: number): Outcome
@@ -74,6 +83,10 @@ export interface AppApi {
   exportDocument(): string
   loadDocument(text: string, opts?: { skipConfirm?: boolean }): boolean
   toggleSplit(): void
+  undo(): void
+  redo(): void
+  canUndo(): boolean
+  canRedo(): boolean
   setDisplayMode(mode: DisplayMode): void
   setUtilityType(type: UtilityType): void
   setUtilityParameter(parameter: number): void
@@ -142,6 +155,14 @@ export function createApp(
   flipBtn.title =
     'Visar trädet omvänt (alla slumputfall kända innan besluten) bredvid ditt ' +
     'träd och räknar ut VOC — värdet av klarsyn. Klicka igen för att stänga.'
+  const undoBtn = document.createElement('button')
+  undoBtn.id = 'undo'
+  undoBtn.textContent = '↶'
+  undoBtn.title = 'Ångra (Ctrl+Z)'
+  const redoBtn = document.createElement('button')
+  redoBtn.id = 'redo'
+  redoBtn.textContent = '↷'
+  redoBtn.title = 'Gör om (Ctrl+Shift+Z)'
   const modeBtn = document.createElement('button')
   modeBtn.id = 'mode-toggle'
   const saveBtn = document.createElement('button')
@@ -154,7 +175,7 @@ export function createApp(
   fileInput.type = 'file'
   fileInput.accept = 'application/json,.json'
   fileInput.style.display = 'none'
-  topbar.append(title, addBtn, flipBtn, modeBtn, saveBtn, loadBtn, fileInput)
+  topbar.append(title, addBtn, flipBtn, undoBtn, redoBtn, modeBtn, saveBtn, loadBtn, fileInput)
 
   const messageStrip = document.createElement('div')
   messageStrip.className = 'message-strip'
@@ -320,8 +341,21 @@ export function createApp(
     messageStrip.style.display = text ? '' : 'none'
   }
 
+  // ── Undo/redo history (snapshot-based) ──
+  // `history[cursor]` is always the current committed state; earlier entries
+  // are undo targets, later ones redo targets. A committed mutation sets
+  // `pendingCommit`, and the tail of render() snapshots — so multi-node effects
+  // (auto-fill, linked-group sync) that all finish before the single render()
+  // collapse into ONE undo step. `restoring` suppresses that while we replay.
+  const HISTORY_CAP = 100
+  const history: Snapshot[] = []
+  let cursor = -1
+  let pendingCommit = false
+  let restoring = false
+
   const markDirty = (): void => {
     state.dirty = true
+    if (!restoring) pendingCommit = true
   }
 
   const guarded = (fn: () => void): void => {
@@ -382,6 +416,77 @@ export function createApp(
       for (const o of a.outcomes) tokens.push(branchLabel(a, o.label))
     }
     return tokens
+  }
+
+  const takeSnapshot = (): Snapshot => ({
+    json: documentToJson({
+      tree: state.root,
+      displayMode: state.displayMode,
+      utility: state.utilityFn,
+      idCounter: state.idCounter,
+    }),
+    split: state.split,
+    selectedId: state.selected?.id ?? null,
+  })
+
+  const updateHistoryButtons = (): void => {
+    undoBtn.disabled = cursor <= 0
+    redoBtn.disabled = cursor >= history.length - 1
+  }
+
+  /** Records the current state as a new history entry, dropping any redo
+   * future and capping the depth (oldest entries fall off silently). */
+  const commitSnapshot = (): void => {
+    history.length = cursor + 1 // drop the redo branch
+    history.push(takeSnapshot())
+    cursor++
+    if (history.length > HISTORY_CAP) {
+      history.shift()
+      cursor--
+    }
+    updateHistoryButtons()
+  }
+
+  /** Establishes a fresh baseline (single entry, nothing to undo). Used at
+   * startup and after loading a document — a load is a new baseline, not a
+   * point in the previous document's history. */
+  const resetHistory = (): void => {
+    history.length = 0
+    history.push(takeSnapshot())
+    cursor = 0
+    pendingCommit = false
+    updateHistoryButtons()
+  }
+
+  const restore = (snap: Snapshot): void => {
+    restoring = true
+    try {
+      const doc = deserializeDocument(snap.json)
+      state.root = doc.tree
+      state.displayMode = doc.displayMode
+      state.utilityFn = doc.utility
+      state.idCounter = doc.idCounter
+      state.split = snap.split
+      state.selected = snap.selectedId ? nodeById(snap.selectedId) : null
+      state.dirty = true // restored state differs from the last saved file
+      pendingCommit = false
+      render()
+    } finally {
+      restoring = false
+    }
+    updateHistoryButtons()
+  }
+
+  const undo = (): void => {
+    if (cursor <= 0) return
+    cursor--
+    restore(history[cursor])
+  }
+
+  const redo = (): void => {
+    if (cursor >= history.length - 1) return
+    cursor++
+    restore(history[cursor])
   }
 
   // ── API — every mutation goes through the model layer ──
@@ -561,6 +666,9 @@ export function createApp(
       state.split = false
       state.dirty = false
       render()
+      // A load is a fresh baseline — you can't undo back into the previous
+      // document's history (that would produce a meaningless hybrid state).
+      resetHistory()
       return true
     },
 
@@ -569,8 +677,16 @@ export function createApp(
       state.viewRight.scale = 1
       state.viewRight.x = 0
       state.viewRight.y = 0
+      // Split mode is a view state (not saved to file, so no markDirty), but it
+      // is still an undoable step — commit a snapshot directly.
+      pendingCommit = true
       render()
     },
+
+    undo,
+    redo,
+    canUndo: () => cursor > 0,
+    canRedo: () => cursor < history.length - 1,
 
     setDisplayMode(mode) {
       state.displayMode = mode
@@ -1493,8 +1609,44 @@ export function createApp(
     syncModeControls()
     renderRightPane()
     updateTraceBar()
+
+    // Commit choke point: any committed mutation set `pendingCommit` (via
+    // markDirty or toggleSplit) and finishes at exactly one render(), so the
+    // whole effect — including multi-node auto-fill and linked-group sync —
+    // becomes ONE history entry. Suppressed while replaying an undo/redo.
+    if (pendingCommit && !restoring) {
+      pendingCommit = false
+      commitSnapshot()
+    }
   }
 
+  // ── Keyboard: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z (or Ctrl+Y) = redo. ──
+  // Skipped entirely when a text field is being edited, so the browser's own
+  // text-undo applies there instead of app-level undo.
+  const isEditingText = (): boolean => {
+    const el = document.activeElement as HTMLElement | null
+    if (!el) return false
+    const tag = el.tagName
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
+  }
+
+  const onKeyDown = (e: KeyboardEvent): void => {
+    if (!(e.ctrlKey || e.metaKey)) return
+    const key = e.key.toLowerCase()
+    const isUndo = key === 'z' && !e.shiftKey
+    const isRedo = (key === 'z' && e.shiftKey) || key === 'y'
+    if (!isUndo && !isRedo) return
+    if (isEditingText()) return // let the field's native undo win
+    e.preventDefault()
+    if (isUndo) undo()
+    else redo()
+  }
+  document.addEventListener('keydown', onKeyDown)
+
+  undoBtn.addEventListener('click', () => undo())
+  redoBtn.addEventListener('click', () => redo())
+
   render()
+  resetHistory() // baseline: the initial (empty) document
   return { state, api }
 }

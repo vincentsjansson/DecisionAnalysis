@@ -934,4 +934,196 @@ describe('createApp', () => {
       }
     })
   })
+
+  describe('undo/redo (snapshot history)', () => {
+    // Drives the outcomes dialog: select node -> context menu -> Redigera utfall,
+    // set probability fields, Save. Returns after the single committing Save.
+    function editProbsViaDialog(
+      app: ReturnType<typeof newApp>['app'],
+      container: HTMLElement,
+      node: TreeNode,
+      values: string[][],
+    ) {
+      app.api.selectNode(node)
+      container
+        .querySelector('[data-node-id="' + node.id + '"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      ;[...container.querySelectorAll('.menu-item')]
+        .find((b) => b.textContent!.includes('Redigera utfall'))!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      const probInputs = [...container.querySelectorAll('.dialog input.prob')] as HTMLInputElement[]
+      // Simulate several keystrokes per field — none of these commit; only Save does.
+      for (const round of values) {
+        round.forEach((v, i) => {
+          probInputs[i].value = v
+          probInputs[i].dispatchEvent(new Event('input', { bubbles: true }))
+        })
+      }
+      ;[...container.querySelectorAll('.dialog button')]
+        .find((b) => b.textContent === 'Spara')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    }
+
+    it('starts with nothing to undo/redo', () => {
+      const { app } = newApp()
+      expect(app.api.canUndo()).toBe(false)
+      expect(app.api.canRedo()).toBe(false)
+    })
+
+    it('add node -> undo removes it, redo restores it', () => {
+      const { app } = newApp()
+      const root = app.api.createRoot('chance', 'V')
+      app.api.addOutcomeTo(root, 'a', 0.5, 3)
+      expect(app.state.root!.outcomes).toHaveLength(1)
+
+      app.api.undo() // undo addOutcome
+      expect(app.state.root!.outcomes).toHaveLength(0)
+      app.api.undo() // undo createRoot
+      expect(app.state.root).toBeNull()
+      expect(app.api.canUndo()).toBe(false)
+
+      app.api.redo() // redo createRoot
+      expect(app.state.root!.label).toBe('V')
+      app.api.redo() // redo addOutcome
+      expect(app.state.root!.outcomes).toHaveLength(1)
+      expect(app.api.canRedo()).toBe(false)
+    })
+
+    it('coalesces many probability edits in one dialog save into ONE undo step', () => {
+      const { app, container } = newApp()
+      const root = app.api.createRoot('chance', 'V')
+      app.api.addOutcomeTo(root, 'a', 0.5)
+      app.api.addOutcomeTo(root, 'b', 0.5)
+
+      // Type several values in the fields, then Save once.
+      editProbsViaDialog(app, container, app.state.root!, [
+        ['0.6', '0.4'],
+        ['0.7', '0.3'],
+        ['0.8', '0.2'],
+      ])
+      expect(app.state.root!.outcomes.map((o) => o.probability)).toEqual([0.8, 0.2])
+
+      // A SINGLE undo returns all the way to 0.5/0.5 — proving the whole edit
+      // session was one step, not one per keystroke.
+      app.api.undo()
+      expect(app.state.root!.outcomes.map((o) => o.probability)).toEqual([0.5, 0.5])
+    })
+
+    it('auto-fill of a linked group is a single undo step', () => {
+      const { app } = newApp()
+      const namen = app.api.createRoot('chance', 'namen')
+      const e1 = app.api.addOutcomeTo(namen, '1', 1 / 3)
+      app.api.addOutcomeTo(namen, '2', 1 / 3)
+      app.api.addOutcomeTo(namen, '3', 1 / 3)
+      const okej = app.api.attachChild(namen, e1, 'chance', 'okejdå')
+      expect(collectGroup(app.state.root!, okej.variableId).length).toBe(3)
+
+      app.api.undo() // one undo removes the ENTIRE auto-fill (all 3 instances)
+      expect(app.state.root!.outcomes.every((o) => o.child === null)).toBe(true)
+
+      app.api.redo()
+      const okej2 = app.state.root!.outcomes[0].child!
+      expect(collectGroup(app.state.root!, okej2.variableId).length).toBe(3)
+    })
+
+    it('probability-sync propagation undoes as one step for the whole group', () => {
+      const { app, container } = newApp()
+      const namen = app.api.createRoot('chance', 'namen')
+      const e1 = app.api.addOutcomeTo(namen, '1', 1 / 3)
+      app.api.addOutcomeTo(namen, '2', 1 / 3)
+      app.api.addOutcomeTo(namen, '3', 1 / 3)
+      const okej = app.api.attachChild(namen, e1, 'chance', 'okejdå')
+      app.api.addOutcomeTo(okej, 'jag', 0.5)
+      app.api.addOutcomeTo(okej, 'du', 0.5)
+      // Commit a synced 0.5/0.5 baseline across the group.
+      editProbsViaDialog(app, container, okej, [['0.5', '0.5']])
+      // Then change to 0.7/0.3 (syncs to all three).
+      editProbsViaDialog(app, container, okej, [['0.7', '0.3']])
+      for (const inst of collectGroup(app.state.root!, okej.variableId)) {
+        expect(inst.outcomes.map((o) => o.probability)).toEqual([0.7, 0.3])
+      }
+
+      app.api.undo() // one step reverts the sync across every instance
+      for (const inst of collectGroup(app.state.root!, okej.variableId)) {
+        expect(inst.outcomes.map((o) => o.probability)).toEqual([0.5, 0.5])
+      }
+    })
+
+    it('flip/split toggle is undoable (restores the previous split mode)', () => {
+      const { app } = newApp()
+      app.api.createRoot('chance', 'V')
+      app.api.toggleSplit() // split ON
+      expect(app.state.split).toBe(true)
+      app.api.toggleSplit() // split OFF
+      expect(app.state.split).toBe(false)
+
+      app.api.undo() // undo the merge -> split ON again
+      expect(app.state.split).toBe(true)
+      app.api.undo() // undo the split -> OFF
+      expect(app.state.split).toBe(false)
+    })
+
+    it('loading a document clears the undo history (fresh baseline)', () => {
+      const { app } = newApp()
+      const root = app.api.createRoot('chance', 'V')
+      app.api.addOutcomeTo(root, 'a', 1, 5)
+      expect(app.api.canUndo()).toBe(true)
+      const doc = app.api.exportDocument()
+
+      expect(app.api.loadDocument(doc, { skipConfirm: true })).toBe(true)
+      expect(app.api.canUndo()).toBe(false)
+      expect(app.api.canRedo()).toBe(false)
+    })
+
+    it('a new mutation after undo clears the redo stack', () => {
+      const { app } = newApp()
+      const root = app.api.createRoot('chance', 'V')
+      app.api.addOutcomeTo(root, 'a')
+      app.api.undo()
+      expect(app.api.canRedo()).toBe(true)
+
+      app.api.addOutcomeTo(app.state.root!, 'b') // new mutation
+      expect(app.api.canRedo()).toBe(false)
+      expect(app.state.root!.outcomes.map((o) => o.label)).toEqual(['b'])
+    })
+
+    it('Ctrl+Z is ignored while a text field is focused, honored otherwise', () => {
+      const { app, container } = newApp()
+      app.api.createRoot('chance', 'V')
+      expect(app.state.root).not.toBeNull()
+
+      const input = document.createElement('input')
+      container.appendChild(input)
+      input.focus()
+      expect(document.activeElement).toBe(input)
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }),
+      )
+      // Editing text -> app undo suppressed, the node still exists.
+      expect(app.state.root).not.toBeNull()
+
+      input.blur()
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }),
+      )
+      // Not editing -> app undo fires, the createRoot is undone.
+      expect(app.state.root).toBeNull()
+    })
+
+    it('respects the history cap without crashing and drops the oldest steps', () => {
+      const { app } = newApp()
+      app.api.createRoot('chance', 'V')
+      // Far more committing actions than the cap (100).
+      for (let i = 0; i < 130; i++) app.api.toggleSplit()
+
+      let count = 0
+      while (app.api.canUndo() && count < 500) {
+        app.api.undo()
+        count++
+      }
+      expect(count).toBeLessThanOrEqual(100)
+      // Still fully functional after churning the history.
+      expect(() => app.api.createRoot('chance', 'W')).not.toThrow()
+    })
+  })
 })

@@ -4,6 +4,27 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-02 (segment 17) — Undo/redo (Ctrl+Z / Ctrl+Shift+Z), snapshot-baserad
+
+**Vad hände:** Byggde ångra/gör-om. Valde **snapshot-baserad historik** (inte command-pattern): vid varje committad mutation deep-clonas hela dokument-state via den redan testade `documentToJson`-round-trippen, plus vy-bitarna split-läge och vald nod. Motiv: med "fail loud"-principen och pedagogiska (små) träd är helträds-snapshots enklare att göra korrekta än inversa operationer per mutation — särskilt givet hur komplex länkad-variabel-synken är (en bugg i en handskriven "ångra sannolikhetssynk" vore lätt att missa).
+
+**Arkitektur:** En central choke point i slutet av `render()`, gated av en `pendingCommit`-flagga som `markDirty()` sätter (och `toggleSplit()` direkt, eftersom split inte markerar dirty men ändå ska vara ångringsbart). Eftersom varje användaråtgärd avslutas med exakt ett `render()`-anrop kollapsar hela effekten — även multinods-effekter som auto-fyll/mirroring och sannolikhetssynk — till EN snapshot. `restore()` sätter en `restoring`-flagga som undertrycker snapshot under uppspelning. `history[cursor]` är alltid nuvarande state; äldre = ångra, nyare = gör om.
+
+**Live-verifierat** (JS-driven DOM): byggde rot→utfall→auto-fyllt barn (2 instanser)→flip, sedan Ctrl+Z stegvis: flip→split av, auto-fyll→**båda** barnen borta i ett steg, utfall borta, rot borta, undo-knappen inaktiveras vid baseline. Ctrl+Shift+Z stegar korrekt framåt och inaktiverar redo vid tip.
+
+**Judgment calls (särskilt "vad är ETT steg"):**
+
+1. **Koalescering av sannolikhetsredigering löses av arkitekturen, inte av en debounce-timer.** Appen muterar trädet bara vid dialog-*spara* (aldrig per tangenttryckning — inmatningsfälten uppdaterar bara en Σ-varning live). Så kontinuerlig redigering av ett fält → en spara → en snapshot. Testet skriver flera värden i ett fält och sparar en gång → verifierar att EN ångra återställer hela vägen. Detta matchar promptens "commit vid blur/stängning".
+2. **displayMode/utility-ändringar committar också** (de sätter `markDirty` → snapshot). Promptens lista nämnde dem inte explicit, men de ingår i dokument-snapshotten; att committa på dem gör ångra konsekvent (ingen överraskande sido-återställning av läge när man ångrar en trädändring gjord efter ett lägesbyte).
+3. **Split-läge ingår i snapshotten** (utöver save-filens fält) så att ångra återställer split som prompten kräver — men `toggleSplit` sätter *inte* dirty (split sparas inte till fil), bara `pendingCommit`.
+4. **Vald nod sparas i snapshotten** (billigt, undviker dinglande pekare) — id:t åter-hittas efter deserialisering eftersom serialiseringen bevarar id:n.
+5. **Global `keydown` på `document`** (inte på container) för att fånga genvägar oavsett fokus. Hoppar över app-undo helt när `input`/`textarea`/`select`/contenteditable har fokus (fältets egen textundo gäller då). Stöd även `Ctrl+Y` för gör-om (billigt).
+6. **Historiktak 100**, äldsta faller bort tyst via `shift()`.
+
+**Testresultat:** 220 gröna (+10 undo/redo-tester: enkel add→undo→redo, koalescering till ett steg, auto-fyll ett steg, sannolikhetssynk ett steg, flip/split-ångra, ladda nollställer historik, redo rensas vid ny mutation, tangentbordsvakt vid textfält-fokus, historiktak utan krasch). `tsc` + build rena. Committat direkt på `main` — avgränsat scope (en UI-fil + CSS + tester + docs).
+
+---
+
 ## 2026-08-02 (segment 16) — DESIGNÄNDRING: sannolikhetssynk + två länkade-grupp-buggar
 
 Live-testning avslöjade tre saker: en **designändring** (inte buggfix) och två regressioner/buggar. Alla tre live-reproducerade och verifierade efter fix (JS-driven DOM mot den körande appen, då browser-panelen inte komponerar skärmdumpar).

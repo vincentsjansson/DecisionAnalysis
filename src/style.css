@@ -57,6 +57,24 @@ button:hover {
   color: var(--paper);
 }
 
+button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+button:disabled:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* Undo/redo: compact, monochrome glyph buttons in the top bar. */
+#undo,
+#redo {
+  padding: 5px 9px;
+  font-size: 15px;
+  line-height: 1;
+}
+
 button.primary {
   font-weight: 600;
 }

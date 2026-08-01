@@ -17,7 +17,7 @@ Kursen (Grunderna för beslutsfattande och beslutsanalys, vecka 2–10) har ett 
 3. ✅ EU (Expected Utility) — u-funktion i två former (linjär + exponentiell CARA med parameter γ, reviderat 2026-07-27 efter kursmaterialet), EV räknas om på nyttovärden och transformeras tillbaka till säkerhetsekvivalent (CE) för visning. γ sätts via elicitering (indifferens-fråga eller referensbelopp), inte råinmatning. Klar.
 4. ✅ Pedagogiska tillägg: sannolikhetsvalidering som synlig UI-varning (Σ-indikator på noden, resolved-prob-medveten) och steg-för-steg-beräkningsvisning (trace-bar för vald nod + terminal-nyttotransform i EU-läge). Klar. **MVP komplett.**
 
-**Explicit uteslutet ur MVP (senare, egna segment):** VOI för imperfekt information (kräver Bayesiansk uppdatering, likelihood, sensitivitet/specificitet — bygger vidare på VOC-ramverket), känslighetsanalys, flerdimensionella värdefunktioner, relevansdiagram, risk & förmåga-modul, beslutsanalyscykel-vy, real optioner, undo/redo, PNG-export, save/load-UI.
+**Explicit uteslutet ur MVP (senare, egna segment):** VOI för imperfekt information (kräver Bayesiansk uppdatering, likelihood, sensitivitet/specificitet — bygger vidare på VOC-ramverket), känslighetsanalys, flerdimensionella värdefunktioner, relevansdiagram, risk & förmåga-modul, beslutsanalyscykel-vy, real optioner, PNG-export, save/load-UI.
 
 ## Bekräftad regel att inte återupprepa
 
@@ -96,7 +96,7 @@ Dessa är redan förhindrade av TS-modellens grundarkitektur (ett villkorsformat
 
 ## Undo/redo
 
-- ❌ Ctrl+Z / Ctrl+Shift+Z, täcker trädändringar (lägg till/ta bort nod, ändra payoff/sannolikhet, flip/split).
+- ✅ **Snapshot-baserad historik (2026-08-02):** `Ctrl+Z`/`Cmd+Z` = ångra, `Ctrl+Shift+Z`/`Cmd+Shift+Z` (även `Ctrl+Y`) = gör om, plus ↶/↷-knappar i toppmenyn (gråas ut när historiken är tom i den riktningen). Vid varje committad mutation deep-clonas hela dokument-state (träd + displayMode + utility + idCounter, via den testade `documentToJson`-round-trippen) plus vy-bitarna split-läge och vald nod; snapshotten tas i **en central choke point** (slutet av `render()`, gated av en `pendingCommit`-flagga som `markDirty`/`toggleSplit` sätter). Därför blir hela effekten av en åtgärd **ETT** steg även när den skapar många noder: auto-fyll/rekursiv mirroring, sannolikhetssynk över en länkad grupp, nodtyp-synk, "Koppla loss" — allt kollapsar till ett steg eftersom det sker före det enda `render()`-anropet. Flip/toggle split är också ett steg (ångra återställer split-läget, inte bara vänstra trädet). **Koalescering:** sannolikhets-/payoff-redigering committar bara vid dialog-spara (inte per tangenttryckning), så kontinuerlig redigering av ett fält är redan ett steg. **Ladda (📂)** nollställer historiken (ny baseline — kan inte ångra tillbaka in i förra dokumentets state); **Spara (💾)** rör inte historiken (bara export). Ny mutation efter ångra rensar redo-stacken. Tangentgenvägarna hoppar över app-undo helt när fokus ligger i ett `input`/`textarea`/`select`/contenteditable (då gäller fältets egen textundo). Historiktak 100 steg — äldsta faller bort tyst.
 
 ## Export
 
