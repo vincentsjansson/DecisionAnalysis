@@ -4,6 +4,40 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-01 (segment 14) — Flip/VOC: korrekthetsbevis + UX-polish
+
+**Bakgrund:** Flip/split (VOC) fanns redan implementerat och enhetstestat, men live-användning kändes klurig/oklar. Uppdraget var dubbelt: (1) bevisa matematisk korrekthet i fler verkliga scenarier än de ursprungliga testerna, (2) göra flödet begripligt utan dokumentation.
+
+**Del 1 — korrekthetsverifiering (`src/model/bayesReversal.scenarios.test.ts`, 7 nya tester, alla med handräknade värden):**
+
+1. **Enkelt symmetriskt träd** — beslut vs säkert utfall, VOC=2. Korrekt.
+2. **Villkorstabeller** (legacys kända svaghet) — C1→beslut→C2 där C2:s fördelning är villkorad på C1 (0.9/0.1 vs 0.1/0.9). Handräknat VOC=1. Testet är medvetet konstruerat så att om omvändningen ignorerade villkorstabellen och använde marginalen (0.5/0.5) skulle den ge VOC=5. Koden ger 1 → **villkorade sannolikheter respekteras genom hela reversal-processen, inte bara marginalerna. Legacy-buggen finns inte kvar.** Korrekt.
+3. **Nästlade länkade grupper** — Väder→Bet(länkad)→Utfall(nästlad länkad), VOC=1.2. variableId-baserad scope-validering ger rätt även på djupet + en negativkontroll att olänkade, olika fördelade likadant-namngivna noder korrekt *avvisas*. Korrekt.
+4. **Asymmetriskt träd** — tidig terminering (No→3), dupliceringsregeln, VOC=0.7. Korrekt.
+5. **Djupt 4-nivåers blandat träd** — C1→D1→C2→D2, länkade grupper; interna invarianter (VOC≥0) + oberoende omräkning av båda EV:erna via `calculateExpectedValue`. Korrekt.
+
+**Ingen matematikbugg hittad.** Ett testantagande var fel (scenario 3 trodde jag var en no-op VOC=0, men Utfall ligger efter beslutet → VOC=1.2); koden hade rätt, jag rättade testets förväntan.
+
+**Del 2 — UX-granskning (browser-automation + jsdom-tester) och fixar:**
+
+| Observation | Åtgärd |
+| --- | --- |
+| Flip öppnar split automatiskt, VOC visas direkt | Redan bra — ingen ändring |
+| Återgång ("Sammanfoga") bevarar vänsterträdets redigeringar | Redan bra — låst med test |
+| Höger träd märkt "Omvänt träd (klarsyn) — skrivskyddat" | Redan bra — ingen ändring |
+| **"VOC" är en oförklarad förkortning** för en student | Ny alltid-synlig hint-rad under VOC-raden som förklarar VOC = värdet av klarsyn; tooltip på Flip-knappen |
+| **Ofullständigt träd (utfall utan sannolikhet/payoff) → tyst "VOC = –"** utan orsak | Fail-loud: VOC-raden säger nu *varför* ("fyll i alla sannolikheter och utfallsvärden …"), i både EV- och EU/CE-läge |
+| **FlipError-meddelanden på engelska** i svenskt UI | Alla `FlipError`-meddelanden översatta till svenska (+ testregexerna uppdaterade) |
+
+**Testresultat:** 195 gröna (185 baslinje + 7 scenarier + 3 nya jsdom-UI-tester för VOC-raden: komplett→siffror+hint, ofullständigt→fail-loud, sammanfoga→dolt+bevarat). `tsc --noEmit` + `vite build` rena. Live-verifierat (JS-driven DOM, då browser-panelen inte komponerade för skärmdumpar): tomt-träd-flip visar hjälptext + hint, tooltip och skrivskyddad-caption på plats.
+
+**Judgment calls:**
+
+1. **Översatte modell-lagrets `FlipError`-meddelanden till svenska.** De visas direkt för användaren i högerpanelen, så i ett annars helsvenskt läromedel är engelska en reell inkonsekvens (observerad live). Uppdaterade de ~6 testregexer som matchade engelska delsträngar. Alternativet (behålla engelska modellfel) valdes bort eftersom texten är användarvänd, inte utvecklarintern.
+2. **Committat direkt på `main`** utan separat PR — avgränsat scope (två UI-element + felmeddelandeöversättning + tester, inga modell-*beteende*ändringar), samma mönster som segment 13. VOC-matematiken rördes inte alls; bara verifierades.
+
+---
+
 ## 2026-07-28 (segment 13) — Rekursiv/tvärgående mirroring av länkade instanser
 
 **Vad hände:** Live-test avslöjade att auto-fyllen (segment 10) bara verkade på ett plan: när "okej" lades under nämen:1 fylldes nämens egna syskonutfall (okej', okej'' under nämen) men INTE motsvarande position på nämen'/nämen'' — de förblev öar. Byggde man ut nämen' separat fick den en orelaterad struktur.

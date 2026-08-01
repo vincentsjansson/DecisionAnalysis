@@ -121,6 +121,9 @@ export function createApp(
   const flipBtn = document.createElement('button')
   flipBtn.id = 'flip'
   flipBtn.textContent = '⇄ Flip'
+  flipBtn.title =
+    'Visar trädet omvänt (alla slumputfall kända innan besluten) bredvid ditt ' +
+    'träd och räknar ut VOC — värdet av klarsyn. Klicka igen för att stänga.'
   const modeBtn = document.createElement('button')
   modeBtn.id = 'mode-toggle'
   const saveBtn = document.createElement('button')
@@ -181,6 +184,16 @@ export function createApp(
   vocBar.className = 'voc-bar'
   vocBar.style.display = 'none'
 
+  // One-line, always-visible explanation of what the VOC number means, so a
+  // first-time user doesn't have to know the abbreviation. Shown only in split.
+  const vocHint = document.createElement('div')
+  vocHint.className = 'voc-hint'
+  vocHint.style.display = 'none'
+  vocHint.textContent =
+    'VOC = värdet av klarsyn: hur mycket det förväntade värdet (EV) ökar om du ' +
+    'får veta alla slumputfall innan du fattar besluten. Höger träd visar det ' +
+    'omvända beslutsläget som VOC bygger på.'
+
   // Calculation-trace bar: shows the arithmetic behind the selected node's
   // value. Visible only while a node is selected.
   const traceBar = document.createElement('div')
@@ -219,6 +232,7 @@ export function createApp(
     utilityBar,
     utilityErrorEl,
     vocBar,
+    vocHint,
     traceBar,
     workspace,
     menuLayer,
@@ -1332,6 +1346,7 @@ export function createApp(
     flipBtn.textContent = state.split ? '⇄ Sammanfoga' : '⇄ Flip'
     rightPane.style.display = state.split ? '' : 'none'
     vocBar.style.display = state.split ? '' : 'none'
+    vocHint.style.display = state.split ? '' : 'none'
     if (!state.split) {
       rightHost.replaceChildren()
       svgRight = null
@@ -1342,7 +1357,7 @@ export function createApp(
       rightHost.replaceChildren()
       svgRight = null
       flipErrorEl.style.display = 'none'
-      vocBar.textContent = 'VOC = – (tomt träd)'
+      vocBar.textContent = 'VOC = – · bygg ett träd (Lägg till nod) för att räkna ut klarsynens värde'
       return
     }
 
@@ -1367,12 +1382,22 @@ export function createApp(
             `CE omvänt (klarsyn) = ${fmt(ceFlip)} · ` +
             `VOC (CE) = ${fmt(ceFlip - ceOrig)}`
         } catch (err) {
-          vocBar.textContent = 'VOC (CE) = –'
           if (err instanceof UtilityDomainError) {
+            vocBar.textContent = 'VOC (CE) = –'
             utilityErrorEl.textContent = err.message
             utilityErrorEl.style.display = ''
+          } else {
+            // Incomplete tree (missing probabilities/payoffs): fail loud with a
+            // reason rather than showing a bare "–".
+            vocBar.textContent =
+              'VOC (CE) = – · fyll i alla sannolikheter och utfallsvärden först'
           }
         }
+      } else if (!Number.isFinite(result.originalEv) || !Number.isFinite(result.flippedEv)) {
+        // Structure flips fine but some probability/payoff is still blank, so
+        // the EVs are NaN. Say why instead of showing a silent "VOC = –".
+        vocBar.textContent =
+          'VOC = – · fyll i alla sannolikheter och utfallsvärden för att räkna ut klarsynens värde'
       } else {
         vocBar.textContent =
           `EV original = ${fmt(result.originalEv)} · ` +

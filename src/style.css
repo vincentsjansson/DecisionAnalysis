@@ -194,6 +194,16 @@ button.primary {
   background: var(--paper);
 }
 
+.voc-hint {
+  flex: 0 0 auto;
+  padding: 4px 16px 6px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--muted);
+  border-bottom: 1px solid var(--faint);
+  background: var(--paper);
+}
+
 .tree-svg {
   display: block;
   cursor: grab;

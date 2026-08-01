@@ -40,6 +40,11 @@ interface PathInfo {
 const DIST_EPSILON = 1e-9
 const VOC_EPSILON = 1e-9
 
+/** Node type in Swedish, for user-facing flip error messages. */
+function typeSv(t: NodeType): string {
+  return t === 'chance' ? 'slumpnod' : 'beslutsnod'
+}
+
 function fmtP(p: number): string {
   return Number.isFinite(p) ? String(parseFloat(p.toPrecision(4))) : '–'
 }
@@ -59,9 +64,9 @@ export function ensureVocInvariant(voc: number): number {
   if (!Number.isFinite(voc)) return voc
   if (voc < -VOC_EPSILON) {
     throw new FlipError(
-      `Internal consistency check failed: VOC = ${voc} is negative, which is ` +
-        `impossible for correct clairvoyance (perfect information cannot make the ` +
-        `decision-maker worse off). Refusing to display a wrong number — this is a bug.`,
+      `Intern konsistenskontroll misslyckades: VOC = ${voc} är negativt, vilket är ` +
+        `omöjligt för korrekt klarsyn (perfekt information kan inte göra ` +
+        `beslutsfattaren sämre ställd). Vägrar visa ett felaktigt tal — detta är en bugg.`,
     )
   }
   return Math.max(0, voc)
@@ -88,7 +93,7 @@ export function ensureVocInvariant(voc: number): number {
  * and the flip throws rather than fabricating a number. */
 export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
   if (root.outcomes.length === 0) {
-    throw new FlipError('Cannot flip: the tree has no outcomes yet.')
+    throw new FlipError('Kan inte vända: trädet har inga utfall än.')
   }
 
   // ── Collect: canonical variable sequence, per-context chance
@@ -127,8 +132,8 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
       for (let i = 0; i < depth; i++) {
         if (canonical[i].variableId === node.variableId) {
           throw new FlipError(
-            `Cannot flip: the variable "${displayName(node)}" appears at two different levels ` +
-              `(level ${i + 1} and level ${depth + 1} via ${where}). A variable cannot occur twice on one path.`,
+            `Kan inte vända: variabeln "${displayName(node)}" förekommer på två olika nivåer ` +
+              `(nivå ${i + 1} och nivå ${depth + 1} via ${where}). En variabel kan inte förekomma två gånger på samma väg.`,
           )
         }
       }
@@ -141,23 +146,23 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
     } else {
       if (existing.variableId !== node.variableId || existing.nodeType !== node.nodeType) {
         throw new FlipError(
-          `Cannot flip: at level ${depth + 1}, one branch has ${existing.nodeType} ` +
-            `"${existing.displayLabel}" but the branch via ${where} has ${node.nodeType} ` +
-            `"${displayName(node)}". All paths must pass the same variables in the same order. ` +
-            `(Two nodes with the same name are only treated as the same variable when linked.)`,
+          `Kan inte vända: på nivå ${depth + 1} har en gren ${typeSv(existing.nodeType)} ` +
+            `"${existing.displayLabel}" men grenen via ${where} har ${typeSv(node.nodeType)} ` +
+            `"${displayName(node)}". Alla vägar måste passera samma variabler i samma ordning. ` +
+            `(Två noder med samma namn behandlas som samma variabel bara när de är länkade.)`,
         )
       }
       const expected = [...existing.outcomeLabels].sort().join(', ')
       const got = node.outcomes.map((o) => o.label).sort().join(', ')
       if (expected !== got) {
         throw new FlipError(
-          `Cannot flip: variable "${displayName(node)}" has outcomes {${got}} via ${where} ` +
-            `but {${expected}} elsewhere — the same variable must have the same outcomes everywhere.`,
+          `Kan inte vända: variabeln "${displayName(node)}" har utfallen {${got}} via ${where} ` +
+            `men {${expected}} någon annanstans — samma variabel måste ha samma utfall överallt.`,
         )
       }
     }
     if (node.outcomes.length === 0) {
-      throw new FlipError(`Cannot flip: node "${displayName(node)}" (via ${where}) has no outcomes.`)
+      throw new FlipError(`Kan inte vända: noden "${displayName(node)}" (via ${where}) har inga utfall.`)
     }
 
     if (node.nodeType === 'chance') {
@@ -170,8 +175,8 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
       }
       if (Number.isFinite(sum) && Math.abs(sum - 1) > 1e-6) {
         throw new FlipError(
-          `Cannot flip: the probabilities of "${displayName(node)}" (via ${where}) sum to ` +
-            `${fmtP(sum)}, expected 1 — fix them before flipping.`,
+          `Kan inte vända: sannolikheterna för "${displayName(node)}" (via ${where}) summerar till ` +
+            `${fmtP(sum)}, förväntat 1 — rätta dem innan du vänder.`,
         )
       }
 
@@ -183,10 +188,10 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
           const equal = (Number.isNaN(p) && Number.isNaN(q)) || Math.abs(p - q) <= DIST_EPSILON
           if (!equal) {
             throw new FlipError(
-              `Cannot flip: the distribution of "${displayName(node)}" differs between branches — ` +
-                `via ${prev.desc}: ${fmtDist(prev.dist)}, but via ${where}: ${fmtDist(dist)}. ` +
-                `Clairvoyance ("learn the outcome before deciding") is only defined when ` +
-                `chance probabilities do not depend on the decision path.`,
+              `Kan inte vända: fördelningen för "${displayName(node)}" skiljer sig mellan grenar — ` +
+                `via ${prev.desc}: ${fmtDist(prev.dist)}, men via ${where}: ${fmtDist(dist)}. ` +
+                `Klarsyn ("få veta utfallet innan beslut") är bara definierat när ` +
+                `slumpsannolikheter inte beror på beslutsvägen.`,
             )
           }
         }
@@ -280,7 +285,7 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
 
   const built = build(new Map(), 0)
   if (built.kind === 'terminal') {
-    throw new FlipError('Cannot flip: the tree has no variables to reorder.')
+    throw new FlipError('Kan inte vända: trädet har inga variabler att ordna om.')
   }
   const flipped = built.node
 

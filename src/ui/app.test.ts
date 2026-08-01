@@ -721,4 +721,71 @@ describe('createApp', () => {
     expect(container.querySelector('.dialog')).toBeNull()
     expect(app.state.message).toContain('redan en rot')
   })
+
+  describe('flip/split VOC bar', () => {
+    // Asymmetric tree (SPEC duplication rule): Bet(decision) Yes -> Weather
+    // Rain 0.3 -> 8 / Sun 0.7 -> 2 ; No -> 3. EV(orig)=3.8, EV(flip)=4.5, VOC=0.7.
+    function buildAsymmetric(app: ReturnType<typeof newApp>['app']) {
+      const root = app.api.createRoot('decision', 'Bet')
+      const yes = app.api.addOutcomeTo(root, 'Yes')
+      app.api.addOutcomeTo(root, 'No', NaN, 3)
+      const w = app.api.attachChild(root, yes, 'chance', 'Weather')
+      return { root, w }
+    }
+
+    it('shows EV/VOC numbers and the explanatory hint when the tree is complete', () => {
+      const { app, container } = newApp()
+      const { w } = buildAsymmetric(app)
+      app.api.addOutcomeTo(w, 'Rain', 0.3, 8)
+      app.api.addOutcomeTo(w, 'Sun', 0.7, 2)
+
+      app.api.toggleSplit()
+
+      const vocBar = container.querySelector('.voc-bar')!
+      expect(vocBar.textContent).toContain('EV original = 3.8')
+      expect(vocBar.textContent).toContain('EV omvänt (klarsyn) = 4.5')
+      expect(vocBar.textContent).toContain('VOC = 0.7')
+
+      // The always-on explanation of what VOC means is visible in split mode.
+      const vocHint = container.querySelector('.voc-hint') as HTMLElement
+      expect(vocHint.style.display).toBe('')
+      expect(vocHint.textContent).toContain('värdet av klarsyn')
+
+      // The read-only tree is clearly labelled.
+      expect(container.querySelector('.pane-caption')!.textContent).toContain('skrivskyddat')
+    })
+
+    it('fails loud (not a silent –) when probabilities/payoffs are missing', () => {
+      const { app, container } = newApp()
+      const { w } = buildAsymmetric(app)
+      app.api.addOutcomeTo(w, 'Rain', 0.3, 8)
+      app.api.addOutcomeTo(w, 'Sun', 0.7) // terminal payoff left blank -> EV is NaN
+
+      app.api.toggleSplit()
+
+      const vocBar = container.querySelector('.voc-bar')!
+      expect(vocBar.textContent).toContain('fyll i alla sannolikheter')
+      // No fabricated number is shown.
+      expect(vocBar.textContent).not.toMatch(/VOC = -?\d/)
+    })
+
+    it('hides the VOC bar and hint again after merging back to single view', () => {
+      const { app, container } = newApp()
+      const { w } = buildAsymmetric(app)
+      app.api.addOutcomeTo(w, 'Rain', 0.3, 8)
+      app.api.addOutcomeTo(w, 'Sun', 0.7, 2)
+
+      app.api.toggleSplit()
+      expect(app.state.split).toBe(true)
+      app.api.toggleSplit()
+
+      expect(app.state.split).toBe(false)
+      const vocBar = container.querySelector('.voc-bar') as HTMLElement
+      const vocHint = container.querySelector('.voc-hint') as HTMLElement
+      expect(vocBar.style.display).toBe('none')
+      expect(vocHint.style.display).toBe('none')
+      // The left (editable) tree survives the round-trip.
+      expect(app.state.root!.label).toBe('Bet')
+    })
+  })
 })

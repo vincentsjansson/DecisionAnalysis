@@ -176,7 +176,7 @@ describe('reverseTreeWithBayes — scope validation', () => {
     addOutcome(w2, 'Rain', 0.5, 3)
     addOutcome(w2, 'Snow', 0.5, 4)
 
-    expect(() => flip(root)).toThrow(/same outcomes everywhere/)
+    expect(() => flip(root)).toThrow(/samma utfall överallt/)
   })
 
   it('rejects chance distributions that depend on the decision branch', () => {
@@ -192,7 +192,7 @@ describe('reverseTreeWithBayes — scope validation', () => {
     addOutcome(w2, 'Rain', 0.5, 3)
     addOutcome(w2, 'Sun', 0.5, 4)
 
-    expect(() => flip(root)).toThrow(/differs between branches/)
+    expect(() => flip(root)).toThrow(/skiljer sig mellan grenar/)
   })
 
   it('rejects a duplicate variable label at two levels', () => {
@@ -202,14 +202,14 @@ describe('reverseTreeWithBayes — scope validation', () => {
     setChild(root, edge, inner)
     addOutcome(inner, 'stop', 1, 5)
 
-    expect(() => flip(root)).toThrow(/two different levels/)
+    expect(() => flip(root)).toThrow(/två olika nivåer/)
   })
 
   it('rejects chance probabilities that do not sum to 1', () => {
     const root = new TreeNode('w', 'chance', 'Weather')
     addOutcome(root, 'Rain', 0.3, 1)
     addOutcome(root, 'Sun', 0.3, 2)
-    expect(() => flip(root)).toThrow(/sum to 0.6/)
+    expect(() => flip(root)).toThrow(/summerar till 0.6/)
   })
 
   it('rejects an empty tree', () => {
@@ -266,7 +266,7 @@ describe('reverseTreeWithBayes — variableId-based matching', () => {
     // No relink, distinct variableIds (w1, w2) -> treated as different
     // variables at the same level -> reject.
     expect(() => reverseTreeWithBayes(root)).toThrow(
-      /same variables in the same order|same name are only treated as the same variable when linked/,
+      /samma variabler i samma ordning|samma namn behandlas som samma variabel bara när de är länkade/,
     )
   })
 })
@@ -304,7 +304,7 @@ describe('reverseTreeWithBayes — edge cases and invariants', () => {
 
   it('ensureVocInvariant throws on a genuinely negative VOC and clamps float noise', () => {
     expect(() => ensureVocInvariant(-0.5)).toThrow(FlipError)
-    expect(() => ensureVocInvariant(-0.5)).toThrow(/negative/)
+    expect(() => ensureVocInvariant(-0.5)).toThrow(/negativt/)
     expect(ensureVocInvariant(-1e-12)).toBe(0)
     expect(ensureVocInvariant(0.3)).toBeCloseTo(0.3)
     expect(Number.isNaN(ensureVocInvariant(NaN))).toBe(true)
