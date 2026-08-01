@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { addOutcome, setChild, TreeNode } from '../model/tree'
-import { LEAF_SPACING, layoutTree, NODE_H } from './layout'
+import { LEAF_SPACING, layoutTree, mirrorLayout, NODE_H } from './layout'
 
 function fan(count: number): TreeNode {
   const root = new TreeNode('root', 'chance', 'Root')
@@ -79,5 +79,69 @@ describe('layoutTree', () => {
     addOutcome(root, 'B', NaN, 2)
     const layout = layoutTree(root)
     expect(layout.leaves.every((l) => Number.isNaN(l.joint))).toBe(true)
+  })
+})
+
+describe('mirrorLayout', () => {
+  function deepTree(): TreeNode {
+    // Bet(decision) Yes -> Weather(chance) Rain->8 / Sun->2 ; No -> 3
+    const root = new TreeNode('bet', 'decision', 'Bet')
+    const yes = addOutcome(root, 'Yes')
+    addOutcome(root, 'No', NaN, 3)
+    const w = new TreeNode('w', 'chance', 'Weather')
+    setChild(root, yes, w)
+    addOutcome(w, 'Rain', 0.3, 8)
+    addOutcome(w, 'Sun', 0.7, 2)
+    return root
+  }
+
+  it('reflects every x around the axis and leaves y/size/refs untouched', () => {
+    const base = layoutTree(deepTree())
+    const AXIS = 1000
+    const m = mirrorLayout(base, AXIS)
+
+    // Same counts, unchanged canvas dimensions.
+    expect(m.boxes).toHaveLength(base.boxes.length)
+    expect(m.leaves).toHaveLength(base.leaves.length)
+    expect(m.edges).toHaveLength(base.edges.length)
+    expect(m.width).toBe(base.width)
+    expect(m.height).toBe(base.height)
+
+    // Node x reflected, y and size identical, node reference preserved.
+    base.boxes.forEach((b, i) => {
+      const mb = m.boxes[i]
+      expect(mb.node).toBe(b.node)
+      expect(mb.x).toBeCloseTo(AXIS - b.x)
+      expect(mb.y).toBe(b.y)
+      expect(mb.w).toBe(b.w)
+    })
+    // Edge endpoints and label x reflected; y untouched.
+    base.edges.forEach((e, i) => {
+      const me = m.edges[i]
+      expect(me.x1).toBeCloseTo(AXIS - e.x1)
+      expect(me.x2).toBeCloseTo(AXIS - e.x2)
+      expect(me.labelX).toBeCloseTo(AXIS - e.labelX)
+      expect(me.y1).toBe(e.y1)
+      expect(me.y2).toBe(e.y2)
+    })
+    // byNode rebuilt to the mirrored boxes (history preserved for prob resolution).
+    for (const b of m.boxes) expect(m.byNode.get(b.node)).toBe(b)
+  })
+
+  it('puts the root on the right and the deepest leaves on the left', () => {
+    const base = layoutTree(deepTree())
+    const m = mirrorLayout(base, base.width)
+    const rootBox = m.byNode.get([...base.byNode.keys()].find((n) => n.id === 'bet')!)!
+    const otherMaxX = Math.max(...m.boxes.filter((b) => b.node.id !== 'bet').map((b) => b.x))
+    // The root (bet) sits to the RIGHT of every other node in the mirrored tree.
+    expect(rootBox.x).toBeGreaterThan(otherMaxX)
+    // Leaves sit to the LEFT of the root.
+    expect(Math.max(...m.leaves.map((l) => l.x))).toBeLessThan(rootBox.x)
+  })
+
+  it('is an involution — mirroring twice restores the original x', () => {
+    const base = layoutTree(deepTree())
+    const back = mirrorLayout(mirrorLayout(base, 777), 777)
+    base.boxes.forEach((b, i) => expect(back.boxes[i].x).toBeCloseTo(b.x))
   })
 })

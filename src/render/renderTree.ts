@@ -6,7 +6,7 @@ import { certaintyEquivalent } from '../model/expectedUtility'
 import type { UtilityFunction } from '../model/utility'
 import { ProbabilitySumError, sumProbabilities } from '../model/validateProbabilities'
 import type { NodeBox } from './layout'
-import { layoutTree } from './layout'
+import { layoutTree, mirrorLayout } from './layout'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
@@ -25,6 +25,10 @@ export interface RenderOptions {
    * equivalent under `utilityFn`. */
   displayMode?: DisplayMode
   utilityFn?: UtilityFunction
+  /** Horizontally mirror the spatial layout (root on the right, branches grow
+   * left) while keeping all text upright and readable. Used for the read-only
+   * clairvoyance tree in split mode. */
+  mirror?: boolean
   onNodeClick?: (node: TreeNode, event: MouseEvent) => void
   onLeafClick?: (node: TreeNode, edge: Outcome, event: MouseEvent) => void
   onBackgroundClick?: () => void
@@ -132,7 +136,14 @@ export function renderTree(
     return svg
   }
 
-  const layout = layoutTree(root)
+  const base = layoutTree(root)
+  // Mirror around whichever is wider — the content or the live canvas — so the
+  // mirrored tree right-aligns to the canvas edge (and a tiny tree still sits
+  // at the right rather than cramped mid-canvas). clientWidth is 0 under jsdom,
+  // where we fall back to the content width.
+  const layout = opts.mirror
+    ? mirrorLayout(base, Math.max(base.width, host.clientWidth || 0))
+    : base
 
   // Edges + labels first (under the nodes).
   for (const line of layout.edges) {
@@ -157,7 +168,9 @@ export function renderTree(
       label += ` · ${p}`
     }
     const t = text(line.labelX, line.labelY, label, 'edge-label')
-    t.setAttribute('text-anchor', 'end')
+    // Mirrored tree: the label sits on the child (left) side, so anchor it to
+    // start (extends right over the curve) instead of end.
+    t.setAttribute('text-anchor', opts.mirror ? 'start' : 'end')
     viewport.appendChild(t)
   }
 
@@ -172,16 +185,20 @@ export function renderTree(
       opts.onLeafClick?.(mark.node, mark.edge, e as MouseEvent)
     })
 
+    // Mirrored tree: the triangle points left (toward its parent on the right)
+    // and its value/joint labels sit to the left, still upright and readable.
     const tri = el('path')
-    tri.setAttribute('d', 'M 0 -12 L 20 0 L 0 12 Z')
+    tri.setAttribute('d', opts.mirror ? 'M 0 -12 L -20 0 L 0 12 Z' : 'M 0 -12 L 20 0 L 0 12 Z')
     tri.setAttribute('class', 'shape')
     g.appendChild(tri)
 
-    const vt = text(28, -2, fmt(mark.edge.value), 'leaf-value')
-    vt.setAttribute('text-anchor', 'start')
+    const labelX = opts.mirror ? -28 : 28
+    const labelAnchor = opts.mirror ? 'end' : 'start'
+    const vt = text(labelX, -2, fmt(mark.edge.value), 'leaf-value')
+    vt.setAttribute('text-anchor', labelAnchor)
     g.appendChild(vt)
-    const pt = text(28, 13, `p = ${fmt(mark.joint)}`, 'leaf-joint')
-    pt.setAttribute('text-anchor', 'start')
+    const pt = text(labelX, 13, `p = ${fmt(mark.joint)}`, 'leaf-joint')
+    pt.setAttribute('text-anchor', labelAnchor)
     g.appendChild(pt)
 
     viewport.appendChild(g)

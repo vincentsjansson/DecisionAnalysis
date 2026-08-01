@@ -112,4 +112,60 @@ describe('renderTree', () => {
     renderTree(h, null)
     expect(h.querySelector('.empty-hint')).not.toBeNull()
   })
+
+  describe('mirror mode (right/clairvoyance tree)', () => {
+    function decisionTree() {
+      const root = new TreeNode('bet', 'decision', 'Bet')
+      const yes = addOutcome(root, 'Yes')
+      addOutcome(root, 'No', NaN, 3)
+      const w = new TreeNode('w', 'chance', 'Weather')
+      setChild(root, yes, w)
+      addOutcome(w, 'Rain', 0.3, 8)
+      addOutcome(w, 'Sun', 0.7, 2)
+      return root
+    }
+
+    const nodeX = (h: HTMLElement, id: string): number => {
+      const t = h.querySelector(`[data-node-id="${id}"]`)!.getAttribute('transform')!
+      return parseFloat(/translate\(([-\d.]+)/.exec(t)![1])
+    }
+
+    it('is idempotent — two mirrored renders match, no duplicate SVG/nodes', () => {
+      const h = host()
+      renderTree(h, decisionTree(), { mirror: true })
+      const first = h.innerHTML
+      const nodeCount = h.querySelectorAll('[data-node-id]').length
+      renderTree(h, decisionTree(), { mirror: true })
+      expect(h.innerHTML).toBe(first)
+      expect(h.querySelectorAll('svg')).toHaveLength(1)
+      expect(h.querySelectorAll('[data-node-id]')).toHaveLength(nodeCount)
+    })
+
+    it('places the root to the RIGHT of its children (branches grow left)', () => {
+      const h = host()
+      renderTree(h, decisionTree(), { mirror: true })
+      // Weather is a child of Bet; mirrored, Bet (root) is right of Weather.
+      expect(nodeX(h, 'bet')).toBeGreaterThan(nodeX(h, 'w'))
+    })
+
+    it('is the horizontal mirror image of the un-mirrored render', () => {
+      const plain = host()
+      renderTree(plain, decisionTree())
+      const mir = host()
+      renderTree(mir, decisionTree(), { mirror: true })
+      // Un-mirrored: root is left of its child. Mirrored: root is right of it.
+      expect(nodeX(plain, 'bet')).toBeLessThan(nodeX(plain, 'w'))
+      expect(nodeX(mir, 'bet')).toBeGreaterThan(nodeX(mir, 'w'))
+    })
+
+    it('points leaf triangles left and keeps text upright (no transform flip)', () => {
+      const h = host()
+      renderTree(h, decisionTree(), { mirror: true })
+      const tri = h.querySelector('g.leaf path')!.getAttribute('d')!
+      expect(tri).toContain('-20 0') // apex points left
+      // Text is never mirror-transformed — labels stay readable.
+      expect(h.querySelector('#viewport')!.getAttribute('transform')).not.toMatch(/scale\(-/)
+      expect(h.querySelector('[data-node-id="bet"] .node-label')!.textContent).toBe('Bet')
+    })
+  })
 })

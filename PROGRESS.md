@@ -4,6 +4,26 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-02 (segment 18) — Speglad layout för höger (klarsyns)träd i split-läge
+
+**Vad byggdes:** Rent rendering/layout-segment — höger trädet i split-läge ritas nu **horisontellt speglat** (rot till höger, grenar växer vänster) istället för som en duplicerad vänster-till-höger-kopia. Bayes-omvändningens matematik rördes inte alls (redan verifierad).
+
+**Implementation:** `mirrorLayout(layout, axisWidth)` i `layout.ts` — en ren efterbehandling som reflekterar varje x-koordinat till `axisWidth − x` (nodboxar, kant-x1/x2, etikett-x), lämnar y/storlek/history/nod-referenser orörda och bygger om `byNode`-mappen. `renderTree` fick en `mirror`-flagga: den kör `mirrorLayout(base, max(base.width, host.clientWidth))`, vänder lövtriangelns riktning (`L -20 0`), lövtextens sida (x −28, ankare end) och kant-etikettens ankare (start). **Ingen `scale(-1)`-transform** — texten ritas alltid upprätt, bara den rumsliga geometrin speglas. `renderRightPane` i app.ts skickar `mirror: true`.
+
+**Layout-beslut (dokumenterade, inga blockeringar):**
+
+1. **Reflektionsaxel = `max(innehållsbredd, canvas-bredd)`**, inte enbart innehållsbredd. C#-referensen reflekterar runt canvas-bredden (`canvasW − ColumnXs[i]`) så roten hamnar vid canvas-kanten. Att bara använda innehållsbredd skulle kläma ett litet träd mot mitten. `host.clientWidth` är 0 under jsdom → faller tillbaka på innehållsbredd (deterministiskt för enhetstester, som reflekterar runt en känd bredd).
+2. **Texttypografi speglas aldrig** — bara nodpositioner, kurvriktning, triangelriktning och text-ankare. Labels/siffror förblir läsbara vänster-till-höger (promptens explicita krav).
+3. **Speglingen sitter i layout-koordinaterna, inte i en SVG-vy-transform** — så oberoende zoom/pan (`viewRight`) och den idempotenta host.replaceChildren()-redrawen fungerar oförändrat.
+
+**Testresultat:** 227 gröna (+7): `mirrorLayout` reflekterar x korrekt kring axeln (y/storlek/refs orörda, byNode ombyggd), rot-till-höger/löv-till-vänster, involution (spegla två gånger = original); `renderTree` mirror är idempotent (två renders identiska, inga DOM-dubbletter), placerar rot höger om barn, är horisontell spegelbild av ospeglad render, pekar lövtrianglar vänster med upprätt text. `tsc` + build rena.
+
+**Live-verifierat** (JS-driven DOM): byggde beslut→chans-träd, Flip → höger träd har chans-rot vid x=623 (höger), beslut-barn vid x=383, löv vid x=188 (vänster), lövtrianglar pekar vänster, labels upprätt. Växla split av/på upprepade gånger → höger panel tömd rent vid av (0 SVG/noder), återuppbyggd identiskt vid på (ingen kvarhängande DOM). Litet träd → rot vid höger kant, inga konstiga marginaler.
+
+**Committat direkt på `main`** — avgränsat scope (en ren layout-funktion + render-flagga + tester + docs), rör inte modell/beräkning eller vänstra trädet.
+
+---
+
 ## 2026-08-02 (segment 17) — Undo/redo (Ctrl+Z / Ctrl+Shift+Z), snapshot-baserad
 
 **Vad hände:** Byggde ångra/gör-om. Valde **snapshot-baserad historik** (inte command-pattern): vid varje committad mutation deep-clonas hela dokument-state via den redan testade `documentToJson`-round-trippen, plus vy-bitarna split-läge och vald nod. Motiv: med "fail loud"-principen och pedagogiska (små) träd är helträds-snapshots enklare att göra korrekta än inversa operationer per mutation — särskilt givet hur komplex länkad-variabel-synken är (en bugg i en handskriven "ångra sannolikhetssynk" vore lätt att missa).

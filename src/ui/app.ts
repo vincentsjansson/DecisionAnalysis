@@ -1528,6 +1528,7 @@ export function createApp(
         view: state.viewRight,
         displayMode: state.displayMode,
         utilityFn: state.utilityFn,
+        mirror: true, // clairvoyance tree reads root-right, branches-left
       })
       flipErrorEl.style.display = 'none'
 

@@ -187,3 +187,29 @@ export function layoutTree(root: TreeNode): TreeLayout {
 
   return { boxes, leaves, edges, byNode, width, height }
 }
+
+/** Reflects a computed layout horizontally around `axisWidth`: every x becomes
+ * `axisWidth - x`. Node boxes are symmetric so reflecting their centers is
+ * exact; an edge's parent-side x (right edge) becomes the mirrored parent's
+ * left edge and vice-versa, so bezier curves grow toward the (now leftward)
+ * children with no other change. ONLY spatial x is mirrored — y, sizes,
+ * history, and every node/edge reference are untouched, so renderTree can still
+ * draw text upright and readable. Used for the right (clairvoyance) tree in
+ * split mode so it reads root-on-the-right, branches-growing-left — a mirror of
+ * the editable left tree. Reflect around `max(content width, canvas width)` so
+ * the tree right-aligns to the canvas edge (and a tiny tree still sits at the
+ * right, not cramped mid-canvas). */
+export function mirrorLayout(layout: TreeLayout, axisWidth: number): TreeLayout {
+  const mx = (x: number): number => axisWidth - x
+  const boxes = layout.boxes.map((b) => ({ ...b, x: mx(b.x) }))
+  const byNode = new Map<TreeNode, NodeBox>()
+  for (const b of boxes) byNode.set(b.node, b)
+  return {
+    boxes,
+    leaves: layout.leaves.map((l) => ({ ...l, x: mx(l.x) })),
+    edges: layout.edges.map((e) => ({ ...e, x1: mx(e.x1), x2: mx(e.x2), labelX: mx(e.labelX) })),
+    byNode,
+    width: layout.width,
+    height: layout.height,
+  }
+}
