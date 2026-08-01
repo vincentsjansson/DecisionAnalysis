@@ -83,6 +83,21 @@ export interface App {
   api: AppApi
 }
 
+/** Rounds a set of target probabilities to a clean 6-significant-figure display
+ * while guaranteeing the set sums to exactly 1. Every value but the last is
+ * rounded normally; the LAST outcome absorbs the rounding residual. This keeps
+ * repeating decimals — thirds (0.333333 / 0.333333 / 0.333334), sixths, etc. —
+ * from tripping the Σ≠1 validation (tolerance 1e-6), where three bare 0.333333
+ * would sum to 0.999999 and fail. `targets` should already sum to ~1. */
+export function distributeSumToOne(targets: number[]): number[] {
+  const n = targets.length
+  if (n === 0) return []
+  const out = targets.map((t) => parseFloat(t.toPrecision(6)))
+  const headSum = out.slice(0, n - 1).reduce((s, v) => s + v, 0)
+  out[n - 1] = parseFloat((1 - headSum).toPrecision(6))
+  return out
+}
+
 /** `confirmFn` is injectable so tests can run destructive flows headlessly. */
 export function createApp(
   container: HTMLElement,
@@ -841,17 +856,23 @@ export function createApp(
       actions.appendChild(
         dialogButton('Normalisera', () => {
           const active = rows.filter((r) => !r.removed && r.probInput)
+          if (active.length === 0) return
           const vals = active.map((r) => parseNum(r.probInput!.value))
+          // Empty fields -> split evenly; otherwise scale to sum 1. Either way
+          // the last outcome absorbs the rounding residual so repeating
+          // decimals (thirds, sixths, …) still sum to exactly 1.
+          let targets: number[]
           if (vals.some((v) => Number.isNaN(v))) {
-            const even = 1 / active.length
-            for (const r of active) r.probInput!.value = String(parseFloat(even.toPrecision(6)))
+            targets = active.map(() => 1 / active.length)
           } else {
             const sum = vals.reduce((s, v) => s + v, 0)
             if (sum <= 0) return
-            active.forEach((r, i) => {
-              r.probInput!.value = String(parseFloat((vals[i] / sum).toPrecision(6)))
-            })
+            targets = vals.map((v) => v / sum)
           }
+          const result = distributeSumToOne(targets)
+          active.forEach((r, i) => {
+            r.probInput!.value = String(result[i])
+          })
           updateWarning()
         }),
       )

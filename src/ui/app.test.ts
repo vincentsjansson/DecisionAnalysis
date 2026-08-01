@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import type { TreeNode } from '../model/tree'
-import { createApp } from './app'
+import { validateProbabilities } from '../model/validateProbabilities'
+import { createApp, distributeSumToOne } from './app'
 
 function newApp(confirmAnswer = true) {
   const container = document.createElement('div')
@@ -786,6 +787,47 @@ describe('createApp', () => {
       expect(vocHint.style.display).toBe('none')
       // The left (editable) tree survives the round-trip.
       expect(app.state.root!.label).toBe('Bet')
+    })
+  })
+
+  describe('distributeSumToOne — repeating-decimal probabilities', () => {
+    const sum = (xs: number[]) => xs.reduce((s, v) => s + v, 0)
+
+    it('thirds sum to exactly 1 with the residual on the last outcome', () => {
+      const r = distributeSumToOne([1 / 3, 1 / 3, 1 / 3])
+      expect(r).toEqual([0.333333, 0.333333, 0.333334])
+      expect(Math.abs(sum(r) - 1)).toBeLessThanOrEqual(1e-6)
+    })
+
+    it('keeps every even split within the Σ=1 tolerance (2..12 outcomes)', () => {
+      for (let n = 2; n <= 12; n++) {
+        const r = distributeSumToOne(Array.from({ length: n }, () => 1 / n))
+        expect(r).toHaveLength(n)
+        expect(Math.abs(sum(r) - 1)).toBeLessThanOrEqual(1e-6)
+      }
+    })
+
+    it('bare 0.333333 inputs (which sum to 0.999999) are fixed to sum to 1', () => {
+      // Without the residual rule three bare 0.333333 sum to 0.999999 and fail.
+      expect(Math.abs(sum([0.333333, 0.333333, 0.333333]) - 1)).toBeGreaterThan(1e-6)
+      const total = sum([0.333333, 0.333333, 0.333333])
+      const r = distributeSumToOne([0.333333 / total, 0.333333 / total, 0.333333 / total])
+      expect(Math.abs(sum(r) - 1)).toBeLessThanOrEqual(1e-6)
+    })
+
+    it('the normalized set passes validateProbabilities (no Σ error)', () => {
+      const { app } = newApp()
+      const root = app.api.createRoot('chance', 'Tärning')
+      const probs = distributeSumToOne([1 / 3, 1 / 3, 1 / 3])
+      app.api.addOutcomeTo(root, 'A', probs[0], 1)
+      app.api.addOutcomeTo(root, 'B', probs[1], 2)
+      app.api.addOutcomeTo(root, 'C', probs[2], 3)
+      expect(() => validateProbabilities(root, new Set())).not.toThrow()
+    })
+
+    it('leaves a single outcome at 1 and handles the empty case', () => {
+      expect(distributeSumToOne([1])).toEqual([1])
+      expect(distributeSumToOne([])).toEqual([])
     })
   })
 })

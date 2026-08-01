@@ -4,6 +4,18 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-01 (segment 15) — Normalisera: repeterande decimaler summerar till exakt 1
+
+**Bakgrund:** Jämn fördelning av sannolikheter som ger oändliga decimaler (⅓ = 0,333333…, ⅙ = 0,166666…) föll utanför Σ=1-valideringen: "Normalisera" avrundade varje värde till 6 värdesiffror, så tre 0,333333 summerade till 0,999999 → `|0,999999 − 1| ≈ 1,0000e-6`, precis *över* toleransen `1e-6` → Σ-felet triggades.
+
+**Åtgärd:** Bröt ut en ren, testbar hjälpfunktion `distributeSumToOne(targets)` i `app.ts`: avrundar alla värden till 6 värdesiffror men sätter **sista utfallet = 1 − summan av de övriga**, så det absorberar avrundningsresten (⅓ → 0.333333 / 0.333333 / 0.333334). "Normalisera"-knappen bygger nu `targets` (tom → jämn fördelning `1/n`; annars skalning `v/Σ`) och kör dem genom hjälpen. Matematiskt: sista värdets egen 6-siffriga avrundning ger som mest 5e-7 fel, oavsett antal utfall → alltid inom `1e-6`.
+
+**Testresultat:** 5 nya tester (tredjedelar → exakt [0.333333,0.333333,0.333334]; jämn fördelning 2–12 utfall inom tolerans; nakna 0.333333-fallet fixat; normaliserad uppsättning passerar `validateProbabilities` utan Σ-fel; enkel-/tom-fall). Totalt 200 gröna. `tsc` + build rena. **Live-verifierat** (JS-driven DOM genom den riktiga Normalisera-knappen): 3 utfall → 0.333333/0.333333/0.333334, summa 1, ingen Σ-varning.
+
+**Judgment call:** Behöll principen "aldrig tyst normalisering" — fixen gäller bara den **explicita** Normalisera-knappen, inte automatiskt vid inmatning. Alternativet (auto-normalisera medan man skriver) valdes bort eftersom det skulle dölja verkliga inmatningsfel, tvärtemot läromedlets fail-loud-design.
+
+---
+
 ## 2026-08-01 (segment 14) — Flip/VOC: korrekthetsbevis + UX-polish
 
 **Bakgrund:** Flip/split (VOC) fanns redan implementerat och enhetstestat, men live-användning kändes klurig/oklar. Uppdraget var dubbelt: (1) bevisa matematisk korrekthet i fler verkliga scenarier än de ursprungliga testerna, (2) göra flödet begripligt utan dokumentation.
