@@ -630,4 +630,28 @@ describe('unlinkNode — leave the group cleanly', () => {
     expect(c.outcomes.some((o) => o.label === 'Z')).toBe(true)
     expect(b.outcomes.some((o) => o.label === 'Z')).toBe(false)
   })
+
+  it('unlinking the PRIMARY instance detaches it (group id == primary node id)', () => {
+    const { root, yes, no } = twoBranchRoot()
+    const a = createLinkedNode(root, 'a', 'chance', 'V') // primary: variableId 'a'
+    setChild(root, yes, a)
+    addOutcome(a, 'X', 0.5, 1)
+    addOutcome(a, 'Y', 0.5, 2)
+    const b = createLinkedNode(root, 'b', 'chance', 'V')
+    setChild(root, no, b)
+    expect(a.variableId).toBe('a')
+    expect(b.variableId).toBe('a') // both share the primary's id
+
+    unlinkNode(root, a) // unlink the primary itself
+
+    // a is now its own variable; b is the sole remaining member of the group.
+    expect(groupSiblings(root, a)).toHaveLength(0)
+    expect(collectGroup(root, a.variableId).map((n) => n.id)).toEqual(['a'])
+    expect(collectGroup(root, b.variableId).map((n) => n.id)).toEqual(['b'])
+    expect(a.variableId).not.toBe(b.variableId)
+    // Edits on b no longer reach a.
+    addOutcomeToGroup(root, b, 'Z')
+    expect(b.outcomes.some((o) => o.label === 'Z')).toBe(true)
+    expect(a.outcomes.some((o) => o.label === 'Z')).toBe(false)
+  })
 })

@@ -4,6 +4,27 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-02 (segment 20) — Länkade instanser: synlighet + "fråga vid avvikelse" + primär-unlink-bugg
+
+**Bakgrund:** Användaren upplevde att **villkorstabeller och "Koppla loss" inte kändes som att de fungerade**. Live-reproduktion på den deployade sidan (JS-driven DOM, browser-panelen komponerar inte skärmdumpar) visade att alla tre mekanismerna (sannolikhetssynk, villkorstabell-opt-out, koppla loss) fungerade *mekaniskt* — men tillståndet var **osynligt och odiscoverbart**, plus **en äkta latent bugg** i unlink av primär-instansen. Uppdraget var att förklara + åtgärda.
+
+**Diagnos (verifierad live):** (1) den naturliga gesten att ge länkade instanser olika sannolikheter misslyckades tyst — synk skrev över; (2) noden visade inget om den synkade / var tabellstyrd / var frikopplad; (3) villkorspickern erbjöd oåtkomliga villkor ("Väder = Regn" för en nod under Sol); (4) bas- vs villkorsvärde var tvetydigt (två olika tal, inget sa vilket som gällde); (5) koppla loss lämnade två likanamnade noder.
+
+**Åtgärder:**
+
+1. **"Fråga vid avvikelse" (användarens val framför alternativen "redigering bryter synk" / "behåll synk, bara tydliggör").** Sparar man en länkad instans med sannolikheter som *skiljer sig från gruppens redan definierade fördelning* öppnas en dialog ("Sannolikheterna skiljer sig från gruppen") med två val: **Uppdatera hela gruppen** (gamla synk-beteendet) eller **Bara den här instansen (koppla loss)**. En *första* ifyllning (gruppens fördelning ännu osatt/NaN) räknas inte som avvikelse → synkar tyst, så "fyll en gång"-målet består. Divergent edit + val kollapsar till **ETT** undo-steg (pendingCommit lever kvar tills valets `render()` — inget mellanliggande commit).
+2. **Träd-indikatorer (`node-badge` i `renderTree.ts`):** liten glyf i nodens hörn — **⛓** för en synkad länkad instans, **⊞** för en tabellstyrd (opt-out). `<title>` ger hover-förklaring. Ingen på singletons. Render-koden räknar `variableId`-förekomster själv (ingen färg, bara en CSS-klass `.node-badge` — temat oförändrat).
+3. **Villkorspickern erbjuder bara åtkomliga villkor:** `availableTokens` returnerar nu bara förfäder-utfall på instansens *faktiska väg* (i ett äkta träd har varje instans exakt en väg, så ett villkor på en syskongren kan aldrig matcha). Döda rader kan inte längre skapas.
+4. **"Gäller för den här instansen"-rad i villkorsdialogen:** visar den *upplösta* fördelningen för nodens väg (`resolveProbability`), så bas vs matchande villkorsrad aldrig är tvetydigt (verifierat live: bas 0.5/0.5 → 0.9/0.1 när Väder=Sol-raden gäller).
+5. **Tabellstyrd-notis i utfallsdialogen:** en tabellstyrd instans får en distinkt notis ("styrs av sin villkorstabell — synkas inte") i stället för den generiska synk-notisen.
+6. **BUGG-FIX — koppla loss av primär-instansen var en no-op.** Gruppens `variableId` *är* primär-instansens nod-id, så `unlinkNode` satte `node.variableId = node.id` (oförändrat) och lämnade primären kvar i gruppen. Fix: när primären kopplas loss flyttas de kvarvarande instanserna till en ny ägar-id (`remaining[0].id`) så primärens id frigörs till en egen variabel. Non-primär-fallet oförändrat.
+
+**Testresultat:** 238 gröna (+11: 5 app-tester för divergens-prompten/first-fill/re-entry/unlink-via-prompt/one-step-undo + picker-reachable + tabellstyrd-notis, 3 renderTree badge-tester, 1 modell-test för primär-unlink; 1 befintligt synk-test omskrivet till nya flödet). `tsc` + `vite build` rena. **Live-verifierat** (lokal dev-server, JS-driven DOM): badges (⛓ länkad, ⊞ tabell, ingen på singleton, försvinner när grupp → 1), divergens-dialog (first fill tyst, avvikelse → två val), "Bara den här instansen" frikopplar korrekt, picker bara "Väder = Sol", resolved-raden uppdateras med tabellvärdet. Inga konsolfel.
+
+**Judgment calls:** (1) "Bara den här instansen" använder `unlinkNode` (full frikoppling) som användaren godkände i formuleringen — inte en ny "bara sannolikheter"-opt-out-flagga (skulle vara en större modelländring; villkorstabell täcker det länk-bevarande fallet för VOC/flip). (2) Reachable-only-pickern valdes framför "varna för döda rader" — att förhindra fel är bättre än att flagga det efteråt, och matchar den äkta träd-semantiken. (3) Primär-unlink-fixen är en ren buggfix i modellen (låg risk, täckt av nytt test). Committat direkt på `main` — avgränsat scope (UI + en render-funktion + en modell-buggfix + CSS + tester + docs), samma mönster som senaste segmenten.
+
+---
+
 ## 2026-08-02 (segment 19) — Papper/rit-tema (design tokens, rent CSS)
 
 **Vad byggdes:** Ett sammanhängande "paper/drafting"-visuellt tema som ersätter det tidigare svart-vitt-temat. **Rent CSS-segment** — ingen TS-logik rördes. Nyckelupptäckt: all färg och alla stroke-widths låg redan i `style.css` (render-koden har inga inline-färger, bara `display`-växlingar), så temat kunde göras helt utan att röra render-koden — även den "godkända" stroke-width/färg-justeringen behövde inte TS.

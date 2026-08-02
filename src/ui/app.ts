@@ -13,6 +13,7 @@ import {
   mirrorLinkedInstances,
   createLinkedNode,
   groupSiblings,
+  hasConditionalTable,
   removeOutcomeFromGroup,
   renameOutcomeInGroup,
   renameVariable,
@@ -21,6 +22,7 @@ import {
   unlinkNode,
 } from '../model/variable'
 import { backwardFill } from '../model/backwardFill'
+import { resolveProbability } from '../model/conditionalProbability'
 import { reverseTreeWithBayes } from '../model/bayesReversal'
 import { deserializeDocument, documentFilename, documentToJson } from '../model/document'
 import { certaintyEquivalent } from '../model/expectedUtility'
@@ -408,14 +410,20 @@ export function createApp(
     return `${node ? node.label : id} = ${label}`
   }
 
-  /** All condition tokens available to `node`: every outcome of every
-   * ancestor (all outcomes, not just the taken path — matches legacy). */
+  /** Condition tokens available to `node`: only the ancestor outcomes actually
+   * on this instance's path (root -> node). In a true tree each node instance
+   * has exactly one path, so a condition on a *sibling* branch (e.g. "Väder =
+   * Regn" for a node sitting under "Väder = Sol") can never match and would be a
+   * dead row. Offering only reachable tokens keeps the conditional table honest;
+   * cross-context authoring is expressed via the linked sibling instances, each
+   * of which carries its own reachable path. (Legacy offered every ancestor
+   * outcome because its flat-sequence nodes were shared across all paths.) */
   const availableTokens = (node: TreeNode): string[] => {
-    const tokens: string[] = []
-    for (let a = node.parent; a !== null; a = a.parent) {
-      for (const o of a.outcomes) tokens.push(branchLabel(a, o.label))
+    const path: string[] = []
+    for (let inc = incomingEdge(node); inc; inc = incomingEdge(inc.parent)) {
+      path.push(branchLabel(inc.parent, inc.edge.label))
     }
-    return tokens
+    return path.reverse() // root-first for readable ordering
   }
 
   const takeSnapshot = (): Snapshot => ({
@@ -902,15 +910,25 @@ export function createApp(
     const isChance = node.nodeType === 'chance'
     const { body, footer } = openDialog(`Utfall — ${displayName(node)}`)
 
-    // Warn that outcome edits propagate to the variable's other instances.
+    // Explain how this instance relates to its linked group. Distinguish the
+    // table-driven case (probabilities here don't apply / don't sync) from the
+    // plain synced case (edits propagate; a divergent value prompts a choice).
     const siblings = state.root ? groupSiblings(state.root, node) : []
     if (siblings.length > 0) {
       const note = document.createElement('p')
       note.className = 'sync-note'
-      note.textContent =
-        `Detta påverkar även: ${siblings.map((n) => displayName(n)).join(', ')} ` +
-        `(utfallsuppsättning och sannolikheter synkas; en instans med egen ` +
-        `villkorstabell styr sina egna sannolikheter).`
+      if (hasConditionalTable(node)) {
+        note.textContent =
+          `Den här instansen styrs av sin villkorstabell — sannolikheterna nedan ` +
+          `används bara som fallback och synkas inte med gruppen (${siblings
+            .map((n) => displayName(n))
+            .join(', ')}). Ta bort villkorstabellen för att synka igen.`
+      } else {
+        note.textContent =
+          `Länkad till: ${siblings.map((n) => displayName(n)).join(', ')}. ` +
+          `Utfallsuppsättning och sannolikheter synkas i gruppen. Anger du andra ` +
+          `sannolikheter än gruppen får du välja om det ska gälla alla eller bara den här instansen.`
+      }
       body.appendChild(note)
     }
 
@@ -1049,8 +1067,73 @@ export function createApp(
                 addOutcomeToGroup(root, node, label, prob)
               }
             }
-            // Push this instance's flat probabilities to the rest of the group
-            // (no-op if this instance is conditional-table-driven).
+            markDirty()
+            // Decide how to propagate this instance's flat probabilities. Normally
+            // they sync to the group's no-table instances ("fill once"). But if the
+            // user entered values that DIFFER from an already-defined group
+            // distribution, silently overwriting the siblings is exactly the
+            // "natural gesture fails" surprise — so we ask instead. A conditional-
+            // table-driven node never syncs (opted out), and a first fill (no
+            // finite donor yet) is not a divergence.
+            const donor = groupSiblings(root, node).find((n) => !hasConditionalTable(n))
+            const divergent =
+              !hasConditionalTable(node) &&
+              donor !== undefined &&
+              node.outcomes.some((o) => {
+                const m = donor.outcomes.find((s) => s.label === o.label)
+                return (
+                  m !== undefined &&
+                  Number.isFinite(o.probability) &&
+                  Number.isFinite(m.probability) &&
+                  Math.abs(o.probability - m.probability) > 1e-9
+                )
+              })
+            if (divergent) {
+              // Leave the group untouched and defer the commit: pendingCommit
+              // (set by markDirty above) survives until the choice dialog's
+              // render(), so the value edit + the sync decision collapse into ONE
+              // undo step. openDivergenceDialog's openDialog closes this one.
+              openDivergenceDialog(node)
+            } else {
+              syncProbabilitiesFromNode(root, node)
+              closeDialog()
+              render()
+            }
+          }),
+        true,
+      ),
+    )
+  }
+
+  /** Shown when a linked instance is saved with probabilities that differ from
+   * its group. Lets the user choose between propagating to the whole group
+   * (the "fill once" default) and giving just this instance its own values by
+   * unlinking it — making the divergence explicit instead of a silent overwrite. */
+  const openDivergenceDialog = (node: TreeNode): void => {
+    const root = state.root ?? node
+    const sibs = groupSiblings(root, node)
+    const { body, footer } = openDialog('Sannolikheterna skiljer sig från gruppen')
+    const p = document.createElement('p')
+    p.textContent =
+      `"${displayName(node)}" är länkad till ${sibs.map((n) => displayName(n)).join(', ')}. ` +
+      `Du angav andra sannolikheter än gruppen. Vad vill du göra?`
+    body.appendChild(p)
+    footer.append(
+      dialogButton('Bara den här instansen (koppla loss)', () =>
+        guarded(() => {
+          unlinkNode(root, node)
+          setMessage(
+            `"${displayName(node)}" är nu frikopplad — egen variabel med egna sannolikheter.`,
+          )
+          markDirty()
+          closeDialog()
+          render()
+        }),
+      ),
+      dialogButton(
+        'Uppdatera hela gruppen',
+        () =>
+          guarded(() => {
             syncProbabilitiesFromNode(root, node)
             markDirty()
             closeDialog()
@@ -1071,6 +1154,36 @@ export function createApp(
       footer.appendChild(dialogButton('Stäng', closeDialog, true))
       return
     }
+
+    // Explain the effect a table has on linked-group sync (the "soft" opt-out).
+    if (state.root && groupSiblings(state.root, node).length > 0) {
+      const info = document.createElement('p')
+      info.className = 'sync-note'
+      info.textContent =
+        'Så länge den här instansen har en villkorstabell styr den sina egna ' +
+        'sannolikheter och synkas inte med gruppen. Tar du bort alla villkorsrader ' +
+        'börjar den synka igen och antar gruppens fördelning.'
+      body.appendChild(info)
+    }
+
+    // Show which distribution actually applies for THIS instance's path, so the
+    // base row vs. a matching conditional row is never ambiguous.
+    const history = historyFor(node)
+    const pathTokens = availableTokens(node)
+    const resolvedLine = document.createElement('p')
+    resolvedLine.className = 'trace-line'
+    const resolvedParts = node.outcomes.map((o) => {
+      let p: string
+      try {
+        p = fmt(resolveProbability(node, o, history))
+      } catch {
+        p = '⚠'
+      }
+      return `${o.label} = ${p}`
+    })
+    const pathText = pathTokens.length > 0 ? pathTokens.map(tokenDisplay).join(', ') : 'roten'
+    resolvedLine.textContent = `Gäller för den här instansen (väg: ${pathText}): ${resolvedParts.join(' · ')}`
+    body.appendChild(resolvedLine)
 
     const table = document.createElement('table')
     table.className = 'matrix'

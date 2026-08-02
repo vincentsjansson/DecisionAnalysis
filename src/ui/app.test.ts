@@ -1037,8 +1037,13 @@ describe('createApp', () => {
       app.api.addOutcomeTo(okej, 'du', 0.5)
       // Commit a synced 0.5/0.5 baseline across the group.
       editProbsViaDialog(app, container, okej, [['0.5', '0.5']])
-      // Then change to 0.7/0.3 (syncs to all three).
+      // Then change to 0.7/0.3. This diverges from the group's committed
+      // 0.5/0.5, so the app asks instead of silently overwriting; choosing
+      // "Uppdatera hela gruppen" syncs it to all three.
       editProbsViaDialog(app, container, okej, [['0.7', '0.3']])
+      ;[...container.querySelectorAll('.dialog button')]
+        .find((b) => b.textContent === 'Uppdatera hela gruppen')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
       for (const inst of collectGroup(app.state.root!, okej.variableId)) {
         expect(inst.outcomes.map((o) => o.probability)).toEqual([0.7, 0.3])
       }
@@ -1126,4 +1131,165 @@ describe('createApp', () => {
       expect(() => app.api.createRoot('chance', 'W')).not.toThrow()
     })
   })
+
+  describe('linked-instance clarity (sync / conditional table / unlink)', () => {
+    // Builds namen(chance, outcomes 1/2/3) -> attaches a linked chance child
+    // "okejdå" (mirrors to 3 instances) with outcomes jag/du, then commits a
+    // synced 0.5/0.5 baseline across the group. Returns the primary child.
+    function buildLinkedGroup(app: ReturnType<typeof newApp>['app'], container: HTMLElement) {
+      const namen = app.api.createRoot('chance', 'namen')
+      const e1 = app.api.addOutcomeTo(namen, '1', 1 / 3)
+      app.api.addOutcomeTo(namen, '2', 1 / 3)
+      app.api.addOutcomeTo(namen, '3', 1 / 3)
+      const okej = app.api.attachChild(namen, e1, 'chance', 'okejdå')
+      app.api.addOutcomeTo(okej, 'jag', 0.5)
+      app.api.addOutcomeTo(okej, 'du', 0.5)
+      saveProbs(container, okej, ['0.5', '0.5']) // first fill -> syncs, no prompt
+      return okej
+    }
+
+    // Opens a node's outcome editor, types the probabilities, clicks Save.
+    function saveProbs(container: HTMLElement, node: TreeNode, values: string[]) {
+      container
+        .querySelector('[data-node-id="' + node.id + '"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      ;[...container.querySelectorAll('.menu-item')]
+        .find((b) => b.textContent!.includes('Redigera utfall'))!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      const probInputs = [...container.querySelectorAll('.dialog input.prob')] as HTMLInputElement[]
+      values.forEach((v, i) => {
+        probInputs[i].value = v
+        probInputs[i].dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      ;[...container.querySelectorAll('.dialog button')]
+        .find((b) => b.textContent === 'Spara')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    }
+
+    it('a first fill (group distribution still unset) syncs without prompting', () => {
+      const { app, container } = newApp()
+      const okej = buildLinkedGroup(app, container)
+      // buildLinkedGroup already did the first fill; no divergence dialog now.
+      expect(container.querySelector('.dialog')).toBeNull()
+      for (const inst of collectGroup(app.state.root!, okej.variableId)) {
+        expect(inst.outcomes.map((o) => o.probability)).toEqual([0.5, 0.5])
+      }
+    })
+
+    it('re-entering the same values does not prompt', () => {
+      const { app, container } = newApp()
+      const okej = buildLinkedGroup(app, container)
+      saveProbs(container, okej, ['0.5', '0.5'])
+      expect(container.querySelector('.dialog')).toBeNull()
+    })
+
+    it('diverging from the group prompts instead of silently overwriting', () => {
+      const { app, container } = newApp()
+      const okej = buildLinkedGroup(app, container)
+      saveProbs(container, okej, ['0.7', '0.3'])
+
+      // The choice dialog is up; the siblings are NOT overwritten yet.
+      expect(container.querySelector('.dialog h2')!.textContent).toContain(
+        'skiljer sig från gruppen',
+      )
+      const group = collectGroup(app.state.root!, okej.variableId)
+      const others = group.filter((n) => n !== okej)
+      expect(okej.outcomes.map((o) => o.probability)).toEqual([0.7, 0.3])
+      for (const inst of others) {
+        expect(inst.outcomes.map((o) => o.probability)).toEqual([0.5, 0.5])
+      }
+    })
+
+    it('"Bara den här instansen" unlinks the node and keeps its own values', () => {
+      const { app, container } = newApp()
+      const okej = buildLinkedGroup(app, container)
+      const originalGroupSize = collectGroup(app.state.root!, okej.variableId).length
+      expect(originalGroupSize).toBe(3)
+
+      saveProbs(container, okej, ['0.7', '0.3'])
+      ;[...container.querySelectorAll('.dialog button')]
+        .find((b) => b.textContent!.includes('Bara den här instansen'))!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+      // okej is now its own variable with its own values; the rest stay linked at 0.5/0.5.
+      expect(collectGroup(app.state.root!, okej.variableId).length).toBe(1)
+      expect(okej.outcomes.map((o) => o.probability)).toEqual([0.7, 0.3])
+      const stillLinked = allNodesIn(app.state.root!).filter(
+        (n) => n.label === 'okejdå' && n !== okej,
+      )
+      for (const inst of stillLinked) {
+        expect(inst.outcomes.map((o) => o.probability)).toEqual([0.5, 0.5])
+      }
+    })
+
+    it('divergence + choice is a single undo step', () => {
+      const { app, container } = newApp()
+      const okej = buildLinkedGroup(app, container)
+      saveProbs(container, okej, ['0.7', '0.3'])
+      ;[...container.querySelectorAll('.dialog button')]
+        .find((b) => b.textContent === 'Uppdatera hela gruppen')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      for (const inst of collectGroup(app.state.root!, okej.variableId)) {
+        expect(inst.outcomes.map((o) => o.probability)).toEqual([0.7, 0.3])
+      }
+      app.api.undo() // ONE step back to the synced 0.5/0.5 baseline
+      for (const inst of collectGroup(app.state.root!, okej.variableId)) {
+        expect(inst.outcomes.map((o) => o.probability)).toEqual([0.5, 0.5])
+      }
+    })
+
+    it('the conditional-table picker offers only reachable path conditions', () => {
+      const { app, container } = newApp()
+      const namen = app.api.createRoot('chance', 'Väder')
+      const eSol = app.api.addOutcomeTo(namen, 'Sol', 0.6)
+      app.api.addOutcomeTo(namen, 'Regn', 0.4)
+      const marknad = app.api.attachChild(namen, eSol, 'chance', 'Marknad')
+      app.api.addOutcomeTo(marknad, 'Upp', 0.5)
+      app.api.addOutcomeTo(marknad, 'Ner', 0.5)
+
+      // Open the conditional table on Marknad (sits under Väder = Sol).
+      container
+        .querySelector('[data-node-id="' + marknad.id + '"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      ;[...container.querySelectorAll('.menu-item')]
+        .find((b) => b.textContent!.includes('Villkorstabell'))!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+      const options = [...container.querySelectorAll('.dialog select option')].map(
+        (o) => o.textContent,
+      )
+      expect(options).toContain('Väder = Sol')
+      expect(options).not.toContain('Väder = Regn') // unreachable for this instance
+    })
+
+    it('a table-driven instance shows a distinct note in the outcome editor', () => {
+      const { app, container } = newApp()
+      const okej = buildLinkedGroup(app, container)
+      // Give okej a conditional table so it opts out of sync.
+      app.api.setConditionalTable(okej, [
+        { condition: new Set(['' + app.state.root!.id + ':1']), probabilities: { jag: 0.9, du: 0.1 } },
+      ])
+
+      container
+        .querySelector('[data-node-id="' + okej.id + '"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      ;[...container.querySelectorAll('.menu-item')]
+        .find((b) => b.textContent!.includes('Redigera utfall'))!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+      const note = container.querySelector('.dialog .sync-note')!.textContent!
+      expect(note).toContain('styrs av sin villkorstabell')
+    })
+  })
 })
+
+/** Depth-first node list — a tiny local helper for the tests above. */
+function allNodesIn(root: TreeNode): TreeNode[] {
+  const out: TreeNode[] = []
+  const walk = (n: TreeNode) => {
+    out.push(n)
+    for (const o of n.outcomes) if (o.child) walk(o.child)
+  }
+  walk(root)
+  return out
+}

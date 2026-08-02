@@ -338,6 +338,14 @@ button.primary:hover {
   text-anchor: middle;
 }
 
+/* Linked-group state glyph (⛓ synced instance, ⊞ conditional-table-driven).
+   Muted so it reads as metadata, not a value; cursor hints the hover title. */
+.node-badge {
+  fill: var(--muted);
+  font-size: 11px;
+  cursor: help;
+}
+
 .leaf-value {
   fill: var(--ink);
   font-family: var(--font-mono);

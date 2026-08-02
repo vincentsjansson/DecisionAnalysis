@@ -282,10 +282,20 @@ export function renameVariable(root: TreeNode, node: TreeNode, newName: string):
  * action (distinct from rename, which propagates). */
 export function unlinkNode(root: TreeNode, node: TreeNode): void {
   const oldGroup = node.variableId
-  if (collectGroup(root, oldGroup).length <= 1) return // already independent
+  const group = collectGroup(root, oldGroup)
+  if (group.length <= 1) return // already independent
+  const remaining = group.filter((n) => n !== node)
+  // The group's variableId is the primary instance's node id. If we're unlinking
+  // that very node, `node.variableId = node.id` would be a no-op and leave it in
+  // the group — so re-home the remaining instances onto a new owner id first,
+  // freeing this node's id to become its own independent variable.
+  const remainingGroup = node.id === oldGroup ? remaining[0].id : oldGroup
+  if (node.id === oldGroup) {
+    for (const n of remaining) n.variableId = remainingGroup
+  }
   node.variableId = node.id
   node.instanceIndex = 0
-  recompact(root, oldGroup)
+  recompact(root, remainingGroup)
 }
 
 /** Other instances (besides `node`) in the same variable group — for the UI to

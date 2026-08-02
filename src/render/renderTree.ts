@@ -107,6 +107,31 @@ function nodeShape(box: NodeBox, selected: boolean): SVGElement {
   return e
 }
 
+/** Small corner glyph showing a chance node's linked-group state: "⊞" when it
+ * is driven by its own conditional table (opted out of probability sync), "⛓"
+ * when it is a plain linked instance (synced with the group). Nothing for a
+ * singleton. A <title> gives an on-hover explanation. Keeps the state visible in
+ * the tree instead of only inside dialogs. */
+function appendStateBadge(g: SVGGElement, box: NodeBox, linked: boolean): void {
+  const tableDriven = box.node.conditionalTable.length > 0
+  let glyph = ''
+  let tip = ''
+  if (tableDriven) {
+    glyph = '⊞'
+    tip = 'Villkorstabell — styr egna sannolikheter, synkas inte med gruppen'
+  } else if (linked) {
+    glyph = '⛓'
+    tip = 'Länkad instans — utfall och sannolikheter synkas med samma variabel på andra grenar'
+  }
+  if (!glyph) return
+  const badge = text(box.w / 2 + 7, -box.h / 2 + 2, glyph, 'node-badge')
+  badge.setAttribute('text-anchor', 'middle')
+  const title = el('title')
+  title.textContent = tip
+  badge.appendChild(title)
+  g.appendChild(badge)
+}
+
 /** Fully idempotent: wipes the host and rebuilds the entire SVG from the
  * model. All listeners live on the fresh elements, so nothing accumulates. */
 export function renderTree(
@@ -204,6 +229,13 @@ export function renderTree(
     viewport.appendChild(g)
   }
 
+  // Count how many nodes share each variableId, so a node can show whether it
+  // is a linked instance (group size > 1) at a glance.
+  const groupCounts = new Map<string, number>()
+  for (const b of layout.boxes) {
+    groupCounts.set(b.node.variableId, (groupCounts.get(b.node.variableId) ?? 0) + 1)
+  }
+
   for (const box of layout.boxes) {
     const g = el('g')
     g.setAttribute('class', `node node-${box.node.nodeType}`)
@@ -221,6 +253,7 @@ export function renderTree(
     if (warning) {
       g.appendChild(text(0, box.h / 2 + 16, warning, 'node-warning'))
     }
+    appendStateBadge(g, box, (groupCounts.get(box.node.variableId) ?? 0) > 1)
 
     viewport.appendChild(g)
   }

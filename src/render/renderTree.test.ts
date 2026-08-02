@@ -168,4 +168,57 @@ describe('renderTree', () => {
       expect(h.querySelector('[data-node-id="bet"] .node-label')!.textContent).toBe('Bet')
     })
   })
+
+  describe('linked-group state badge', () => {
+    // Two chance instances sharing a variableId (a linked group), one of which
+    // is driven by a conditional table.
+    function linkedTree() {
+      const root = new TreeNode('root', 'decision', 'D')
+      const gA = addOutcome(root, 'a')
+      const gB = addOutcome(root, 'b')
+      const m1 = new TreeNode('m1', 'chance', 'M')
+      const m2 = new TreeNode('m2', 'chance', 'M')
+      m1.variableId = 'grpM'
+      m2.variableId = 'grpM'
+      m1.instanceIndex = 0
+      m2.instanceIndex = 1
+      addOutcome(m1, 'x', 0.5, 1)
+      addOutcome(m1, 'y', 0.5, 0)
+      addOutcome(m2, 'x', 0.5, 1)
+      addOutcome(m2, 'y', 0.5, 0)
+      setChild(root, gA, m1)
+      setChild(root, gB, m2)
+      return { root, m1, m2 }
+    }
+
+    it('shows the linked glyph (⛓) on plain linked instances', () => {
+      const { root } = linkedTree()
+      const h = host()
+      renderTree(h, root)
+      const badge = h.querySelector('[data-node-id="m1"] .node-badge')!
+      expect(badge).not.toBeNull()
+      // firstChild is the glyph text node; the <title> child holds the tooltip.
+      expect(badge.firstChild!.textContent).toBe('⛓')
+      expect(badge.querySelector('title')!.textContent).toContain('Länkad instans')
+    })
+
+    it('shows the conditional-table glyph (⊞) when an instance has a table', () => {
+      const { root, m1 } = linkedTree()
+      m1.conditionalTable = [{ condition: new Set(['root:a']), probabilities: { x: 0.9, y: 0.1 } }]
+      const h = host()
+      renderTree(h, root)
+      expect(h.querySelector('[data-node-id="m1"] .node-badge')!.firstChild!.textContent).toBe('⊞')
+      // The sibling with no table is still a plain linked instance.
+      expect(h.querySelector('[data-node-id="m2"] .node-badge')!.firstChild!.textContent).toBe('⛓')
+    })
+
+    it('shows no badge on a singleton node', () => {
+      const root = new TreeNode('root', 'chance', 'Solo')
+      addOutcome(root, 'a', 0.5, 1)
+      addOutcome(root, 'b', 0.5, 0)
+      const h = host()
+      renderTree(h, root)
+      expect(h.querySelector('[data-node-id="root"] .node-badge')).toBeNull()
+    })
+  })
 })
