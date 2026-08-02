@@ -1,11 +1,52 @@
-/* Black-and-white theme throughout — no color carries meaning. */
+/* ═══════════════════════════════════════════════════════════════════════════
+   Paper / drafting theme — the single source of visual truth.
+   Every color, font and line weight in the app resolves to a token below;
+   nothing downstream hardcodes a value. Reskin the whole app by swapping these.
+   ═══════════════════════════════════════════════════════════════════════════ */
 :root {
-  --ink: #1a1a1a;
-  --paper: #ffffff;
-  --muted: #666666;
-  --faint: #cccccc;
+  /* ── Surfaces & ink ──
+     Warm-neutral vellum, chosen over cool: a "paper/drafting" surface reads as
+     physical paper, which is warm; cool-neutral reads more like a screen. Kept
+     very subtle (R−B ≈ 7) so it never looks yellow/beige. Node & dialog fills
+     share the page tone, so shapes read as line-art drawn ON the paper. */
+  --paper: #f6f4ef; /* page + node/dialog fill */
+  --ink: #2a2621; /* soft sepia-black ink, not pure black */
+  --muted: #6f6759; /* secondary text / de-emphasized lines */
+  --faint: #d9d3c7; /* hairline dividers */
+
+  /* ── Structural accent: muted brick ──
+     For emphasis on structural elements only (primary button, node selection,
+     the sync rule). Deliberately NOT a replacement for the functional colors. */
+  --accent: #8a453a;
+  --accent-ink: #f6f4ef; /* text/detail on an accent fill */
+
+  /* ── Functional semantic colors ──
+     Kept distinct and meaning-bearing, just muted for the paper palette:
+       blue   = probability / linked-instance sync info
+       orange = warnings / incomplete data
+     (New in this theme — the prior black-and-white theme carried no color
+     meaning; these encode the two categories the tool actually distinguishes.) */
+  --sem-prob: #40597a; /* muted slate-indigo */
+  --sem-warn: #b0682f; /* muted terracotta / ochre */
+
+  /* ── Line weights: hairline drafting strokes ── */
+  --stroke-w: 1.1; /* node & edge outlines (was 1.5) */
+  --stroke-w-selected: 2.4;
+
+  /* ── Typography ──
+     Serif for headings/labels (drafting title-block feel), monospace for every
+     numeric readout (EV/CE/probabilities line up, read as precise), sans for
+     body copy. System stacks only — no external font, so a static offline page
+     never risks a font load failure. */
+  --font-heading: Georgia, 'Times New Roman', serif;
+  --font-body: 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
+
+  /* ── Motion: minimal & mechanical (short, linear — never bouncy) ── */
+  --motion-fast: 100ms linear;
+
   color-scheme: light;
-  font: 14px/1.5 'Segoe UI', system-ui, sans-serif;
+  font: 14px/1.5 var(--font-body);
   color: var(--ink);
   background: var(--paper);
 }
@@ -38,8 +79,10 @@ body {
 }
 
 .app-title {
-  font-size: 16px;
+  font-family: var(--font-heading);
+  font-size: 17px;
   font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 button {
@@ -47,9 +90,11 @@ button {
   color: var(--ink);
   background: var(--paper);
   border: 1px solid var(--ink);
-  border-radius: 4px;
+  border-radius: 3px;
   padding: 5px 12px;
   cursor: pointer;
+  transition: background-color var(--motion-fast), color var(--motion-fast),
+    border-color var(--motion-fast);
 }
 
 button:hover {
@@ -77,6 +122,15 @@ button:disabled:hover {
 
 button.primary {
   font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+button.primary:hover {
+  color: var(--accent-ink);
+  background: var(--ink);
+  border-color: var(--ink);
 }
 
 /* ── Message strip: backward-fill reports and errors ── */
@@ -113,6 +167,7 @@ button.primary {
 .pane-caption {
   flex: 0 0 auto;
   padding: 4px 12px;
+  font-family: var(--font-heading);
   font-size: 12px;
   font-style: italic;
   color: var(--muted);
@@ -123,6 +178,7 @@ button.primary {
   padding: 16px;
   font-size: 13px;
   font-style: italic;
+  color: var(--sem-warn);
 }
 
 /* ── Utility config bar (EU mode) ── */
@@ -160,6 +216,7 @@ button.primary {
 
 .risk-readout {
   color: var(--muted);
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -169,6 +226,7 @@ button.primary {
   border-bottom: 1px solid var(--ink);
   font-size: 12px;
   font-style: italic;
+  color: var(--sem-warn);
   background: var(--paper);
 }
 
@@ -179,6 +237,7 @@ button.primary {
 
 .elicit-preview {
   color: var(--muted);
+  font-family: var(--font-mono);
   font-size: 12px;
   margin: 0;
 }
@@ -188,6 +247,7 @@ button.primary {
   flex: 0 0 auto;
   border-bottom: 1px solid var(--ink);
   padding: 6px 16px;
+  font-family: var(--font-mono);
   font-size: 13px;
   background: var(--paper);
   /* Keep the full expression readable at high branching factors by wrapping
@@ -197,6 +257,7 @@ button.primary {
 }
 
 .trace-line {
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--muted);
   margin: 4px 0 0;
@@ -207,6 +268,7 @@ button.primary {
   flex: 0 0 auto;
   border-bottom: 1px solid var(--ink);
   padding: 6px 16px;
+  font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 600;
   background: var(--paper);
@@ -241,11 +303,12 @@ button.primary {
 .shape {
   fill: var(--paper);
   stroke: var(--ink);
-  stroke-width: 1.5;
+  stroke-width: var(--stroke-w);
 }
 
 .shape.selected {
-  stroke-width: 3;
+  stroke: var(--accent);
+  stroke-width: var(--stroke-w-selected);
 }
 
 .node,
@@ -259,6 +322,7 @@ button.primary {
 
 .node-label {
   fill: var(--ink);
+  font-family: var(--font-heading);
   font-size: 13px;
   font-weight: 600;
   text-anchor: middle;
@@ -266,12 +330,13 @@ button.primary {
 
 .node-ev {
   fill: var(--muted);
+  font-family: var(--font-mono);
   font-size: 11px;
   text-anchor: middle;
 }
 
 .node-warning {
-  fill: var(--ink);
+  fill: var(--sem-warn);
   font-size: 10px;
   font-style: italic;
   text-anchor: middle;
@@ -279,23 +344,26 @@ button.primary {
 
 .leaf-value {
   fill: var(--ink);
+  font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 600;
 }
 
 .leaf-joint {
-  fill: var(--muted);
+  fill: var(--sem-prob);
+  font-family: var(--font-mono);
   font-size: 10px;
 }
 
 .edge {
   fill: none;
   stroke: var(--muted);
-  stroke-width: 1.5;
+  stroke-width: var(--stroke-w);
 }
 
 .edge-label {
-  fill: var(--muted);
+  fill: var(--sem-prob);
+  font-family: var(--font-mono);
   font-size: 10px;
 }
 
@@ -315,10 +383,17 @@ button.primary {
 
 .menu-item {
   border: none;
-  border-radius: 4px;
+  border-radius: 3px;
   text-align: left;
   padding: 8px 12px;
+  font-family: var(--font-heading);
   background: var(--paper);
+}
+
+/* Softer than the topbar buttons' full invert — a paper-toned highlight. */
+.menu-item:hover {
+  background: var(--faint);
+  color: var(--ink);
 }
 
 /* ── Dialogs ── */
@@ -344,7 +419,8 @@ button.primary {
 }
 
 .dialog h2 {
-  font-size: 15px;
+  font-family: var(--font-heading);
+  font-size: 16px;
   margin: 0 0 12px;
 }
 
@@ -384,6 +460,7 @@ button.primary {
 .dialog input.prob {
   flex: 0 0 70px;
   width: 70px;
+  font-family: var(--font-mono);
 }
 
 .dialog-actions {
@@ -408,14 +485,16 @@ button.primary {
 .dialog-warning {
   font-size: 12px;
   font-style: italic;
+  color: var(--sem-warn);
   margin: 6px 0 0;
 }
 
+/* Linked-instance sync info — the "blue" functional category. */
 .sync-note {
   font-size: 12px;
   font-style: italic;
-  color: var(--muted);
-  border-left: 2px solid var(--ink);
+  color: var(--sem-prob);
+  border-left: 2px solid var(--sem-prob);
   padding-left: 8px;
   margin: 0 0 10px;
 }
@@ -444,6 +523,7 @@ button.primary {
 
 .matrix input.prob {
   width: 70px;
+  font-family: var(--font-mono);
 }
 
 .hint {

@@ -4,6 +4,29 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-02 (segment 19) — Papper/rit-tema (design tokens, rent CSS)
+
+**Vad byggdes:** Ett sammanhängande "paper/drafting"-visuellt tema som ersätter det tidigare svart-vitt-temat. **Rent CSS-segment** — ingen TS-logik rördes. Nyckelupptäckt: all färg och alla stroke-widths låg redan i `style.css` (render-koden har inga inline-färger, bara `display`-växlingar), så temat kunde göras helt utan att röra render-koden — även den "godkända" stroke-width/färg-justeringen behövde inte TS.
+
+**Tema-arkitektur (beslut #1):** Alla färger, typsnitt och linjetjocklekar är nu CSS custom properties i ett tydligt avgränsat `:root`-block överst i `style.css`. Behöll de befintliga token-namnen (`--ink/--paper/--muted/--faint`) i stället för att döpa om till skissens exempelnamn (`--paper-bg` etc.) — "t.ex." i prompten = exempel, inte krav; omdöpning skulle röra dussintals referenser för noll funktionell vinst och bryta mot "håll diffen fokuserad / döp inte om i onödan". La till nya tokens: `--accent`, `--accent-ink`, `--sem-prob`, `--sem-warn`, `--stroke-w`, `--stroke-w-selected`, `--font-heading/-body/-mono`, `--motion-fast`.
+
+**Konkreta designval (med värden):**
+
+- **Bakgrund:** varm-neutral vellum `#f6f4ef` (R−B ≈ 7, mycket subtil). Valde varm över kall: ett papper/rit-tema läses som fysiskt papper (varmt); kall-neutral läses mer som en skärm/blueprint. Hålls subtil för att undvika gulaktigt/beige.
+- **Bläck:** mjuk sepia-svart `#2a2621` i stället för ren svart (`#1a1a1a`) — dämpad bläck-ton (beslut #2).
+- **Hårfina linjer:** node/edge `stroke-width` 1.5 → **1.1** (`--stroke-w`); vald nod 3 → 2.4 med accent-stroke.
+- **Serif** (`Georgia, "Times New Roman", serif`) för rubriker/etiketter: app-titel, nodnamn, menyval, dialogrubriker, pane-caption. **Monospace** (`"SF Mono", "Cascadia Code", Consolas, ui-monospace, monospace`) för alla siffror: node-EV, leaf-value/joint, edge-label, trace, VOC-bar, risk-readout, prob-inputs. Systemstackar valda medvetet — statisk offline-sida ska aldrig riskera ett font-laddningsfel (ingen extern webbfont).
+- **Funktionell färgsemantik (beslut #3, NY):** det gamla temat var helt svart-vitt — ingen blå/orange fanns. Införde dem dämpade enligt intentionen: **skiffer-blå `#40597a`** för sannolikhet/synk-info (edge-label, leaf-joint, sync-note), **terrakotta `#b0682f`** för varningar/ofullständigt (node-warning, dialog-warning, flip/utility-error). Flaggas här som *nyinförda*, inte "bevarade-men-dämpade", eftersom de inte fanns förut — men de kodar exakt de två kategorier prompten ville särskilja.
+- **Accent (tegel):** dämpad `#8a453a` för strukturell emfas — primärknapp (Skapa/Spara/OK), vald nod-stroke, sync-note-kant. Ersätter INTE blå/orange (beslut #3).
+- **Rörelse:** fanns inga transitions förut. La till korta linjära `100ms`-transitions på knappar (mekanisk känsla, inga studsiga kurvor). Mjukade menyval-hover från full invert till papperston `--faint`.
+- **Hörnmärken:** hoppade över (beslut #4).
+
+**Verifiering:** 227 tester gröna (inga klassnamn ändrade → DOM-strukturtester opåverkade). `tsc` + build rena. **Live-verifierat via beräknade CSS-värden** (skärmdumpar fungerade inte — browser-panelen komponerar inte): papper `rgb(246,244,239)`, node-label Georgia serif på sepia `rgb(42,38,33)`, node-EV/edge-label SF Mono, Σ-varning terrakotta `rgb(176,104,47)`, edge-label (sannolikhet) skiffer-blå `rgb(64,89,122)`, node/edge-stroke 1.1px, primärknapp accent-tegel `rgb(138,69,58)` med papper-text, dialog-h2 + pane-caption serif, prob-input mono. Höger (speglade) panelen använder identiska CSS-klasser → temad identiskt.
+
+**Committat direkt på `main`** — rent CSS, avgränsat, ingen logik/struktur rörd.
+
+---
+
 ## 2026-08-02 (segment 18) — Speglad layout för höger (klarsyns)träd i split-läge
 
 **Vad byggdes:** Rent rendering/layout-segment — höger trädet i split-läge ritas nu **horisontellt speglat** (rot till höger, grenar växer vänster) istället för som en duplicerad vänster-till-höger-kopia. Bayes-omvändningens matematik rördes inte alls (redan verifierad).
