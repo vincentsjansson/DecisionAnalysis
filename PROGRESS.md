@@ -25,6 +25,8 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 **Committat direkt på `main`** — rent CSS, avgränsat, ingen logik/struktur rörd.
 
+**Justering direkt efter (användarönskemål):** bakgrunden ändrad från varm vellum `#f6f4ef` till **helt vit `#ffffff`**, och **alla siffror satta till svart bläck** (node-EV, edge-label/sannolikhet, leaf-joint, risk-readout, trace) — den dämpade blå togs bort från tal och signalerar nu bara sync-note. Varningarnas orange (`#b0682f`) behålls. Fortsatt rent CSS via tokens; live-verifierat (page-bg `rgb(255,255,255)`, siffror `rgb(42,38,33)`, Σ-varning orange).
+
 ---
 
 ## 2026-08-02 (segment 18) — Speglad layout för höger (klarsyns)träd i split-läge

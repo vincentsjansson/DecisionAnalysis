@@ -5,11 +5,9 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
   /* ── Surfaces & ink ──
-     Warm-neutral vellum, chosen over cool: a "paper/drafting" surface reads as
-     physical paper, which is warm; cool-neutral reads more like a screen. Kept
-     very subtle (R−B ≈ 7) so it never looks yellow/beige. Node & dialog fills
-     share the page tone, so shapes read as line-art drawn ON the paper. */
-  --paper: #f6f4ef; /* page + node/dialog fill */
+     Pure white page (per user preference); node & dialog fills share the page
+     tone, so shapes read as line-art drawn on the paper. */
+  --paper: #ffffff; /* page + node/dialog fill */
   --ink: #2a2621; /* soft sepia-black ink, not pure black */
   --muted: #6f6759; /* secondary text / de-emphasized lines */
   --faint: #d9d3c7; /* hairline dividers */
@@ -21,13 +19,11 @@
   --accent-ink: #f6f4ef; /* text/detail on an accent fill */
 
   /* ── Functional semantic colors ──
-     Kept distinct and meaning-bearing, just muted for the paper palette:
-       blue   = probability / linked-instance sync info
-       orange = warnings / incomplete data
-     (New in this theme — the prior black-and-white theme carried no color
-     meaning; these encode the two categories the tool actually distinguishes.) */
-  --sem-prob: #40597a; /* muted slate-indigo */
-  --sem-warn: #b0682f; /* muted terracotta / ochre */
+     orange = warnings / incomplete data (the one meaning-bearing color).
+     Numbers are plain black per user preference; the muted blue now signals
+     only linked-instance sync info (the sync note). */
+  --sem-prob: #40597a; /* muted slate-indigo — linked-sync info */
+  --sem-warn: #b0682f; /* muted terracotta / ochre — warnings */
 
   /* ── Line weights: hairline drafting strokes ── */
   --stroke-w: 1.1; /* node & edge outlines (was 1.5) */
@@ -215,7 +211,7 @@ button.primary:hover {
 }
 
 .risk-readout {
-  color: var(--muted);
+  color: var(--ink);
   font-family: var(--font-mono);
   font-size: 12px;
 }
@@ -259,7 +255,7 @@ button.primary:hover {
 .trace-line {
   font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--muted);
+  color: var(--ink);
   margin: 4px 0 0;
 }
 
@@ -329,7 +325,7 @@ button.primary:hover {
 }
 
 .node-ev {
-  fill: var(--muted);
+  fill: var(--ink);
   font-family: var(--font-mono);
   font-size: 11px;
   text-anchor: middle;
@@ -350,7 +346,7 @@ button.primary:hover {
 }
 
 .leaf-joint {
-  fill: var(--sem-prob);
+  fill: var(--ink);
   font-family: var(--font-mono);
   font-size: 10px;
 }
@@ -362,7 +358,7 @@ button.primary:hover {
 }
 
 .edge-label {
-  fill: var(--sem-prob);
+  fill: var(--ink);
   font-family: var(--font-mono);
   font-size: 10px;
 }
