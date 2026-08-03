@@ -471,6 +471,28 @@ export function createApp(
     }
   }
 
+  /** After outcome(s) are added to a chance node that ALREADY has a following
+   * child, extend the mirroring to the new (still-terminal) outcomes so they
+   * get their own linked instance of that child variable — instead of being
+   * left as leaves. E.g. a parent whose outcomes lead to nod'/nod'' gains a
+   * nod''' under a newly-added outcome. Finds a template child anywhere in the
+   * parent's linked group; no-op for decision parents (asymmetry is intentional)
+   * or when no child exists yet. Returns the instances created. */
+  const mirrorChildToNewOutcomes = (node: TreeNode): TreeNode[] => {
+    if (node.nodeType !== 'chance') return []
+    const owner = rootOf(node)
+    let template: TreeNode | null = null
+    for (const inst of [node, ...groupSiblings(owner, node)]) {
+      const withChild = inst.outcomes.find((o) => o.child)
+      if (withChild?.child) {
+        template = withChild.child
+        break
+      }
+    }
+    if (!template) return []
+    return mirrorLinkedInstances(owner, node, template, nextId)
+  }
+
   /** Display form of a condition token "nodeId:label" -> "NodLabel = label". */
   const tokenDisplay = (token: string): string => {
     const sep = token.indexOf(':')
@@ -610,6 +632,9 @@ export function createApp(
 
     addOutcomeTo(node, label, probability = NaN, value?) {
       const edge = addOutcomeToGroup(rootOf(node), node, label, probability, value)
+      // If the node already has a following child, fill this new outcome with a
+      // linked instance of it too (don't leave it a leaf).
+      mirrorChildToNewOutcomes(node)
       touchTree(node)
       markDirty()
       render()
@@ -1314,6 +1339,9 @@ export function createApp(
                 addOutcomeToGroup(root, node, label, prob)
               }
             }
+            // Newly-added outcomes on a chance node that already has a following
+            // child get their own linked child instance too (not left as leaves).
+            mirrorChildToNewOutcomes(node)
             markDirty()
             // Decide how to propagate this instance's flat probabilities. Normally
             // they sync to the group's no-table instances ("fill once"). But if the

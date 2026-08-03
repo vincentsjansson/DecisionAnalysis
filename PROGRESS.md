@@ -4,6 +4,16 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-04 (segment 24) — Auto-fyll nya utfall på en förälder som redan har barn
+
+**Buggen (användarrapport):** `mirrorLinkedInstances` körde bara vid `attachChild` (när man lägger till en barnnod). Lade man senare till ett nytt *utfall* på en chansförälder vars övriga utfall redan hade mirrorade barn (nod'/nod''), blev det nya utfallet en **lövnod** istället för att få en egen länkad barn-instans (nod''').
+
+**Fix (`app.ts`):** ny hjälpare `mirrorChildToNewOutcomes(node)` — om noden är en chansnod och det redan finns ett barn någonstans i förälderns länkade grupp, används det som template och `mirrorLinkedInstances` fyller alla nya (terminala) utfall med en länkad instans. Anropas efter att utfall lagts till i **båda** ingångarna: `api.addOutcomeTo` och utfallsdialogens Spara. No-op för beslutsnoder (asymmetri är avsiktlig) och när inget barn finns än (utfallet ska då vara ett löv).
+
+**Testresultat:** 254 gröna (+2: nytt utfall på chansförälder med barn → länkad instans, 3:e okejdå skapas, en grupp; beslutsförälder auto-fylls INTE). Det befintliga 9-grid-testet (nämen) opåverkat. `tsc` + build rena. **Live-verifierat:** namen(1/2)→okejdå (2 instanser), la till utfall 3 → 3 okejdå-instanser, inga lövnoder kvar, inga konsolfel.
+
+---
+
 ## 2026-08-04 (segment 23) — Pill-drag omdefinierad: NIVÅ-omordning istället för syskon-utfall
 
 **Vad hände:** Användaren klargjorde att pill-draget (byggt i segment 21 som syskon-utfalls-omordning) skulle fungera "på det andra sättet": dra för att byta plats på **nivåerna** i trädet (`a→b→c` blir `b→a→c`), inte byta syskon-utfall. Två frågor besvarade av användaren: (1) det ska omstrukturera det **faktiska trädet på plats** (i den panel pill-baren tillhör), inte bara en vy; (2) **bara byta med grannen** (en transposition per drag). Regeln: man kan inte byta ordning förbi en **bortkoppling** eller en **villkorstabell**, och man byter inte plats på `a`/`a'` (länkade instanser är samma nivå).

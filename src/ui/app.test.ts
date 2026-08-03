@@ -946,6 +946,40 @@ describe('createApp', () => {
         expect(inst.outcomes.map((o) => o.probability)).toEqual([0.2, 0.8])
       }
     })
+
+    it('adding an outcome to a parent that already has a child fills it with a linked instance', () => {
+      const { app } = newApp()
+      // namen (chance) 1/2 with a linked child "okejdå" auto-mirrored under both.
+      const namen = app.api.createRoot('chance', 'namen')
+      const e1 = app.api.addOutcomeTo(namen, '1', 0.5)
+      app.api.addOutcomeTo(namen, '2', 0.5)
+      app.api.attachChild(namen, e1, 'chance', 'okejdå')
+      // Both outcomes now lead to an okejdå instance (2 instances).
+      const okejCount = (root: TreeNode) =>
+        allNodesIn(root).filter((n) => n.label === 'okejdå').length
+      expect(okejCount(app.state.root!)).toBe(2)
+      expect(namen.outcomes.every((o) => o.child?.label === 'okejdå')).toBe(true)
+
+      // Add a THIRD outcome — it must get its own linked okejdå, not be a leaf.
+      const e3 = app.api.addOutcomeTo(namen, '3', 0.5)
+      expect(e3.child).not.toBeNull()
+      expect(e3.child!.label).toBe('okejdå')
+      expect(okejCount(app.state.root!)).toBe(3)
+      // All three okejdå instances are one linked variable group.
+      const group = collectGroup(app.state.root!, e3.child!.variableId)
+      expect(group).toHaveLength(3)
+    })
+
+    it('does NOT auto-fill new outcomes on a DECISION parent (asymmetry preserved)', () => {
+      const { app } = newApp()
+      // A decision "Bet" with Yes -> Weather(chance); No stays a leaf.
+      const bet = app.api.createRoot('decision', 'Bet')
+      const yes = app.api.addOutcomeTo(bet, 'Yes')
+      app.api.attachChild(bet, yes, 'chance', 'Weather')
+      // Add another decision alternative — it must NOT sprout a Weather child.
+      const maybe = app.api.addOutcomeTo(bet, 'Maybe')
+      expect(maybe.child).toBeNull()
+    })
   })
 
   describe('undo/redo (snapshot history)', () => {
