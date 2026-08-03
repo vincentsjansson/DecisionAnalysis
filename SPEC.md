@@ -107,7 +107,7 @@ Dessa är redan förhindrade av TS-modellens grundarkitektur (ett villkorsformat
 
 ## Export
 
-- ❌ PNG-export med transparent bakgrund, bara text/grafik synlig. Kräver att renderingen finns först.
+- ✅ **PNG-export med transparent bakgrund (2026-08-04, segment 25):** 🖼 PNG-knapp bredvid 💾 Spara laddar ner **vänstra trädet** (huvudträdet) som en PNG-bild med **transparent bakgrund** — bara text/grafik synlig. `src/render/pngExport.ts`: klonar canvas-SVG:n, återställer viewport-transformen (exporterar hela trädet i **naturlig** storlek, oberoende av nuvarande zoom/pan), fittar `viewBox` till innehållets `getBBox` + marginal, och **inline:ar beräknade stilar** (`getComputedStyle` per element → `fill`/`stroke`/`stroke-width`/typsnitt/…) eftersom extern CSS inte följer med en fristående serialiserad SVG — så bilden matchar temat på skärmen. Rastreras via `Image`→`<canvas>` i **2×** (skarp) utan `fillRect` (canvas är transparent bakom trädet) → `toBlob('image/png')` → nedladdning (filnamn = rotnamn + datum, `.png`). Systemtypsnitten (Georgia/SF Mono-stackar) finns lokalt → ingen extern font att bädda in. Filnamn härleds via `documentFilename` (samma säkra namn som JSON, `.png`). **Live-verifierat:** exporterad PNG har alla fyra hörn alpha 0 (transparent), ~20k bläck-pixlar (trädet ritat med korrekt styling), 684×250 px för ett litet träd. Tomt träd → "Inget träd att exportera". *(Testtäckning: knappens närvaro + tomt-träd-meddelande i jsdom; själva rastreringen — `getBBox`/`canvas`/`Image` finns inte i jsdom — är live-verifierad.)*
 
 ## Expected Utility (EU)
 

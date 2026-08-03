@@ -40,6 +40,7 @@ import {
 } from '../model/utility'
 import type { UtilityFunction, UtilityType } from '../model/utility'
 import { applyViewTransform, fmt, renderTree } from '../render/renderTree'
+import { exportTreePng } from '../render/pngExport'
 import type { DisplayMode, ViewTransform } from '../render/renderTree'
 
 export interface AppState {
@@ -190,6 +191,10 @@ export function createApp(
   const saveBtn = document.createElement('button')
   saveBtn.id = 'save'
   saveBtn.textContent = '💾 Spara'
+  const pngBtn = document.createElement('button')
+  pngBtn.id = 'save-png'
+  pngBtn.textContent = '🖼 PNG'
+  pngBtn.title = 'Spara trädet som PNG-bild (transparent bakgrund)'
   const loadBtn = document.createElement('button')
   loadBtn.id = 'load'
   loadBtn.textContent = '📂 Ladda'
@@ -197,7 +202,7 @@ export function createApp(
   fileInput.type = 'file'
   fileInput.accept = 'application/json,.json'
   fileInput.style.display = 'none'
-  topbar.append(title, addBtn, flipBtn, undoBtn, redoBtn, modeBtn, saveBtn, loadBtn, fileInput)
+  topbar.append(title, addBtn, flipBtn, undoBtn, redoBtn, modeBtn, saveBtn, pngBtn, loadBtn, fileInput)
 
   const messageStrip = document.createElement('div')
   messageStrip.className = 'message-strip'
@@ -1697,6 +1702,24 @@ export function createApp(
     a.click()
     URL.revokeObjectURL(url)
     setMessage(`Sparat som ${a.download}.`)
+  })
+
+  pngBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    const treeSvg = canvasHost.querySelector('svg') as SVGSVGElement | null
+    if (!state.root || !treeSvg) {
+      setMessage('Inget träd att exportera.')
+      return
+    }
+    guarded(() => {
+      const name = documentFilename(state.root).replace(/\.json$/, '.png')
+      const started = exportTreePng(treeSvg, name)
+      setMessage(
+        started
+          ? `Exporterade ${name} (PNG, transparent bakgrund).`
+          : 'Kunde inte exportera — trädet är tomt.',
+      )
+    })
   })
 
   loadBtn.addEventListener('click', (e) => {

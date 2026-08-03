@@ -4,6 +4,24 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-04 (segment 25) — PNG-export med transparent bakgrund
+
+**Vad byggdes:** Den sista ❌-punkten i backloggen: exportera trädet som en PNG-bild med transparent bakgrund. Ny 🖼 PNG-knapp bredvid 💾 Spara.
+
+**Implementation (`src/render/pngExport.ts`, ny modul):** `buildExportSvg(svgEl, margin)` klonar canvas-SVG:n, nollställer viewport-transformen (exporterar hela trädet i naturlig storlek, inte nuvarande zoom/pan), fittar `viewBox` till `#viewport.getBBox()` + marginal, och **inline:ar beräknade stilar** per element (`getComputedStyle` → `fill`/`stroke`/`stroke-width`/`font-*`/`text-anchor`/…). Nyckelinsikt: en fristående serialiserad SVG bär INTE med sig extern CSS (klasserna `.node-label` etc.), så utan inlining blir bilden ostylad — inlining av computed styles gör att bilden matchar temat oavsett vilket tema som gäller. `exportTreePng(svgEl, filename, scale=2)` skapar en Blob-URL av SVG-strängen, laddar den i en `Image`, ritar på en `<canvas>` i 2× (skarp) **utan** `fillRect` (canvas är transparent bakom trädet), och `toBlob('image/png')` → nedladdning.
+
+**UI (`app.ts`):** `🖼 PNG`-knapp i toppbaren; klick exporterar `canvasHost`s SVG (vänstra/huvudträdet) med filnamn = `documentFilename(root).replace('.json','.png')`. Tomt träd → "Inget träd att exportera". Wrappad i `guarded`.
+
+**Verifiering:** 255 gröna (+1: knappens närvaro + tomt-träd-meddelande; rastreringen kan inte köras i jsdom — `getBBox`/`canvas`/`Image` saknas — så den är **live-verifierad** i stället). `tsc` + build rena. **Live-verifierat** (byggde Väder Rain0.3→8/Sun0.7→2, klickade export, inspekterade PNG-blobbens pixlar): `image/png` 31.5 KB, 684×250 px (2× av 342×125), **alla fyra hörn alpha 0 = transparent bakgrund**, ~19,9k bläck-pixlar (trädet ritat med korrekt styling). `Image`-laddning av den serialiserade SVG:n bekräftat OK (ingen namespace/font-miss). Inga konsolfel.
+
+**Judgment calls:**
+1. **Egen 🖼 PNG-knapp** bredvid Spara i stället för en dropdown på Spara-ikonen — enklare, mer discoverbart, samma mål ("på spara-ikonen ska det också finnas möjlighet att spara som png"). Kan bli en meny senare om fler exportformat tillkommer.
+2. **Exporterar vänstra trädet** (huvudträdet). I split-läge exporteras inte höger separat i v1 — kan läggas till om det efterfrågas.
+3. **Naturlig storlek, inte nuvarande zoom/pan** — en export ska vara hela trädet, inte den råkade vy-utsnittet. viewBox fittas till innehållet.
+4. **Inline:ade computed styles** i stället för att bädda in en `<style>`-tagg med tema-tokens — robustare (fångar exakt vad som renderas, oberoende av CSS-struktur/kaskad).
+
+---
+
 ## 2026-08-04 (segment 24) — Auto-fyll nya utfall på en förälder som redan har barn
 
 **Buggen (användarrapport):** `mirrorLinkedInstances` körde bara vid `attachChild` (när man lägger till en barnnod). Lade man senare till ett nytt *utfall* på en chansförälder vars övriga utfall redan hade mirrorade barn (nod'/nod''), blev det nya utfallet en **lövnod** istället för att få en egen länkad barn-instans (nod''').

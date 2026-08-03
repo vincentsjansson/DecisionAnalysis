@@ -648,6 +648,18 @@ describe('createApp', () => {
     expect(fresh.state.dirty).toBe(false)
   })
 
+  it('has a PNG export button next to Save; on an empty tree it reports nothing to export', () => {
+    const { app, container } = newApp()
+    const pngBtn = container.querySelector('#save-png') as HTMLButtonElement
+    expect(pngBtn).not.toBeNull()
+    expect(pngBtn.textContent).toContain('PNG')
+    // No tree yet -> clicking reports there's nothing to export (no crash; the
+    // actual rasterization path — getBBox/canvas/Image — isn't available in jsdom
+    // and is verified live instead).
+    pngBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(app.state.message).toContain('Inget träd att exportera')
+  })
+
   it('round-trips linked variables + conditional tables + EU through save/load', () => {
     const { app } = newApp()
     const test = app.api.createRoot('chance', 'test')
