@@ -12,8 +12,12 @@ export class FlipError extends Error {
 
 export interface FlipResult {
   flipped: TreeNodeType
-  /** EV(flipped) − EV(original), clamped of float noise; NaN when the tree
-   * is incomplete. Guaranteed ≥ 0 — a genuinely negative value throws. */
+  /** flippedEv − originalEv, informational only (the app displays VOC as the
+   * direction-agnostic |EV_left − EV_right|, computed independently in app.ts).
+   * NaN when either tree is incomplete. Unlike the old classical-clairvoyance
+   * reversal, this is NOT guaranteed ≥ 0 — a full sequence reversal can make
+   * EV go either way, so no invariant is enforced here (see `ensureVocInvariant`,
+   * kept as a standalone utility but no longer called from this function). */
   voc: number
   originalEv: number
   flippedEv: number
@@ -57,9 +61,10 @@ function describeContext(assignment: Map<string, string>, varName: Map<string, s
   return [...assignment].map(([k, v]) => `${varName.get(k) ?? k}=${v}`).join(' → ')
 }
 
-/** The VOC ≥ 0 invariant: perfect information can never hurt. A genuinely
- * negative value means the reversal itself is buggy — refuse to show it.
- * Tiny negative float noise is clamped to 0. */
+/** Standalone ≥0 check, kept for callers that want the classical clairvoyance
+ * invariant (perfect information can never hurt) — e.g. a future strict-VOC
+ * mode. NOT called by `reverseTreeWithBayes` itself: a full sequence reversal
+ * has no such guarantee (see FlipResult.voc). */
 export function ensureVocInvariant(voc: number): number {
   if (!Number.isFinite(voc)) return voc
   if (voc < -VOC_EPSILON) {
@@ -72,52 +77,51 @@ export function ensureVocInvariant(voc: number): number {
   return Math.max(0, voc)
 }
 
-/** Classical clairvoyance flip with correct probability handling.
+/** Full sequence reversal (segment 22, 2026-08-03/04 — replaces the earlier
+ * classical-clairvoyance chance-before-decision reversal).
  *
- * Validates that every root-to-terminal path passes the same variables in the
- * same order (early termination allowed — the textbook duplication rule
- * applies: a terminal that skips later variables keeps its payoff under every
- * outcome of those variables). Then rebuilds the tree with all chance
- * variables ahead of all decisions ("what if we knew the outcomes before
- * deciding?"), as a genuinely new tree: fresh flip_N ids, one node copy per
- * branch, and each chance outcome carrying its context-resolved probability
- * P(V | earlier chance outcomes) as a plain base probability — no conditional
- * tables needed, since a true tree has no sharing to disambiguate.
+ * The flipped tree reverses the ENTIRE node sequence along every path,
+ * regardless of node type: a→b→c becomes c→b→a. This is a purely structural/
+ * positional mirror, not a Bayesian posterior computation — each moved node
+ * keeps its OWN outcome set and the probabilities already attached to those
+ * outcomes, copied unchanged from the original tree. There is no "value of
+ * clairvoyance" semantics anymore (a decision node can end up earlier than
+ * information it originally depended on), so EV is not guaranteed to increase
+ * — VOC is displayed by the app as the direction-agnostic |EV_left − EV_right|.
  *
- * Chance variables keep their original relative order: for clairvoyance EV
- * (Σ_ω P(ω) · max over decisions) the internal chance order is irrelevant,
- * so no chance-vs-chance Bayes inversion is ever required — the "posteriors"
- * that matter are exactly these per-context distributions. What IS required,
- * and enforced, is that chance distributions do not depend on decision
- * branches — otherwise "learning the outcome before deciding" is circular
- * and the flip throws rather than fabricating a number. */
+ * Early termination (the textbook duplication rule) still works exactly as
+ * before: `canonical` establishes one variable per depth from the longest
+ * paths, shorter paths simply don't include later variables, and `build`
+ * skips a variable when no path compatible with the current assignment
+ * includes it — this logic doesn't care what order `order` visits variables
+ * in, so it is unchanged by the switch to full reversal.
+ *
+ * The one thing full reversal cannot support: a chance node whose probability
+ * genuinely depends on context (a conditional table that varies by branch).
+ * In the old algorithm this was fine because the deciding ancestor was always
+ * placed earlier (chance-before-decision). Under a full reversal an ancestor
+ * can end up LATER than the node it would have determined — at the point the
+ * node is built there is no way to know which of its context-dependent
+ * distributions applies — so this fails loud with `FlipError` rather than
+ * guessing. A chance node with a single, context-independent distribution
+ * (the common case, and the only one linked-group probability sync produces)
+ * is unaffected. */
 export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
   if (root.outcomes.length === 0) {
     throw new FlipError('Kan inte vända: trädet har inga utfall än.')
   }
 
-  // ── Collect: canonical variable sequence, per-context chance
-  //    distributions, and every path's variable assignment. Variables are
-  //    identified by variableId (linked instances share one), not by a
-  //    coincidental label match. ──
+  // ── Collect: canonical variable sequence, each chance variable's own
+  //    (context-independent) distribution, and every path's variable
+  //    assignment. Variables are identified by variableId (linked instances
+  //    share one), not by a coincidental label match. ──
   const canonical: CanonicalVar[] = []
   const paths: PathInfo[] = []
+  // Keyed by variableId only (NOT by preceding context): a full reversal can
+  // place a node's determining ancestor after it, so the node's distribution
+  // must be the same everywhere it occurs — see the FlipError below.
   const distGroups = new Map<string, { dist: Map<string, number>; desc: string }>()
   const varName = new Map<string, string>() // variableId -> display name, for messages
-
-  const chanceContextKey = (
-    depth: number,
-    variableId: string,
-    assignment: Map<string, string>,
-  ): string => {
-    const parts: string[] = []
-    for (let i = 0; i < depth; i++) {
-      if (canonical[i].nodeType === 'chance') {
-        parts.push(`${canonical[i].variableId}=${assignment.get(canonical[i].variableId)}`)
-      }
-    }
-    return `${depth}|${variableId}|${parts.join('|')}`
-  }
 
   const visit = (
     node: TreeNodeType,
@@ -180,23 +184,23 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
         )
       }
 
-      const key = chanceContextKey(depth, node.variableId, assignment)
-      const prev = distGroups.get(key)
+      const prev = distGroups.get(node.variableId)
       if (prev) {
         for (const [label, p] of dist) {
           const q = prev.dist.get(label)!
           const equal = (Number.isNaN(p) && Number.isNaN(q)) || Math.abs(p - q) <= DIST_EPSILON
           if (!equal) {
             throw new FlipError(
-              `Kan inte vända: fördelningen för "${displayName(node)}" skiljer sig mellan grenar — ` +
+              `Kan inte vända: "${displayName(node)}" har olika sannolikheter beroende på kontext — ` +
                 `via ${prev.desc}: ${fmtDist(prev.dist)}, men via ${where}: ${fmtDist(dist)}. ` +
-                `Klarsyn ("få veta utfallet innan beslut") är bara definierat när ` +
-                `slumpsannolikheter inte beror på beslutsvägen.`,
+                `En fullständig sekvensvändning kräver att varje nod har SAMMA sannolikheter ` +
+                `överallt, eftersom förfadern som villkoret beror på kan hamna efter noden i den ` +
+                `vända ordningen — ta bort villkorstabellen eller gör sannolikheterna kontextoberoende.`,
             )
           }
         }
       } else {
-        distGroups.set(key, { dist, desc: where })
+        distGroups.set(node.variableId, { dist, desc: where })
       }
     }
 
@@ -217,12 +221,9 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
   }
   visit(root, 0, new Set(), new Map())
 
-  // ── Build the flipped tree: chance variables first (original relative
-  //    order), then decisions (original relative order). ──
-  const order = [
-    ...canonical.map((v, i) => ({ v, i })).filter((x) => x.v.nodeType === 'chance'),
-    ...canonical.map((v, i) => ({ v, i })).filter((x) => x.v.nodeType === 'decision'),
-  ]
+  // ── Build the flipped tree: the ENTIRE canonical sequence reversed,
+  //    regardless of node type (full sequence reversal, not chance-first). ──
+  const order = canonical.map((v, i) => ({ v, i })).reverse()
 
   let idCounter = 0
   const nid = (): string => `flip_${++idCounter}`
@@ -239,14 +240,16 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
    * branch of the flipped tree if some original path compatible with the
    * branch actually passes it — otherwise every payoff in the branch is
    * independent of the variable and the level is skipped, mirroring the
-   * original tree's early termination. */
+   * original tree's early termination. Order-agnostic: works identically for
+   * full reversal as it did for chance-first ordering. */
   const anyCompatiblePathIncludes = (assign: Map<string, string>, variableId: string): boolean =>
     paths.some((p) => p.varsIncluded.has(variableId) && compatible(p, assign))
 
   /** Evaluates the original tree as a payoff function of a full variable
    * assignment (keyed by variableId). Early-terminating original paths simply
    * ignore the assigned values of the variables they skip — the textbook
-   * duplication rule. */
+   * duplication rule. Order-agnostic: walks the ORIGINAL tree, independent of
+   * what order the flipped tree was built in. */
   const evaluate = (assign: Map<string, string>): number => {
     let node = root
     for (;;) {
@@ -263,12 +266,11 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
     while (k < order.length && !anyCompatiblePathIncludes(assign, order[k].v.variableId)) k++
     if (k === order.length) return { kind: 'terminal', value: evaluate(assign) }
 
-    const { v, i } = order[k]
+    const { v } = order[k]
     const node = new TreeNode(nid(), v.nodeType, v.displayLabel)
-    const dist =
-      v.nodeType === 'chance'
-        ? distGroups.get(chanceContextKey(i, v.variableId, assign))?.dist
-        : undefined
+    // Each chance node keeps its own (context-independent) distribution —
+    // copied unchanged, never recomputed for the new position.
+    const dist = v.nodeType === 'chance' ? distGroups.get(v.variableId)?.dist : undefined
 
     for (const outLabel of v.outcomeLabels) {
       const probability = dist ? (dist.get(outLabel) ?? NaN) : NaN
@@ -289,7 +291,8 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
   }
   const flipped = built.node
 
-  // ── EVs and the VOC invariant. ──
+  // ── EVs, informational only (the app computes its own displayed VOC as
+  //    |EV_left − EV_right|, independent of these fields). ──
   let originalEv = NaN
   let flippedEv = NaN
   try {
@@ -303,6 +306,5 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
     /* incomplete tree -> NaN */
   }
 
-  const voc = ensureVocInvariant(flippedEv - originalEv)
-  return { flipped, voc, originalEv, flippedEv }
+  return { flipped, voc: flippedEv - originalEv, originalEv, flippedEv }
 }

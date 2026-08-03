@@ -4,6 +4,32 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-04 (segment 22) — Bayes-omvändning omdefinierad: full sekvensvändning
+
+**Vad hände:** Efter segment 21 (VOC=|diff|, redigerbart höger träd) klargjorde användaren via flera korrigerande meddelanden att själva omvändnings**algoritmen** — inte bara VOC-visningen — skulle ändras. Ursprunglig hypotes (min missuppfattning): omvändningen skulle bara agera villkorligt ("bara om beslut→chans, annars rör vi inget"). Användarens rättning: **ingen villkorssats alls** — omvändningen ska **alltid** vända hela nodsekvensen rakt av, oavsett typ (`a→b→c` blir `c→b→a` även med blandade besluts-/chansnoder), och den flyttade noden behåller sina **egna** utfall + sannolikheter oförändrade (ingen Bayesiansk omräkning).
+
+**Implementation (`src/model/bayesReversal.ts`):** `canonical`-uppbyggnaden (en variabel per djup, validerad över alla vägar via `visit()`, tidig terminering via dupliceringsregeln) är **helt oförändrad** från segment 6 — bara `order = canonical.slice().reverse()` istället för "chans grupperat före beslut". `build()`/`evaluate()`/`anyCompatiblePathIncludes()` är redan ordnings-agnostiska (de bryr sig bara om VILKA variabler som är kvar att placera, inte i vilken ordning) och behövde inte röras. Enda substantiella ändringen: `distGroups`-nyckeln förenklades från kontext-baserad (`chanceContextKey`: djup + variableId + tidigare CHANS-sannolikheter) till **enbart `variableId`** — eftersom en fullständig vändning kan placera en förfader EFTER noden den bestämmer, finns inget sätt att veta vilken av flera kontextberoende fördelningar som gäller vid byggtillfället. En chansnod med genuint olika sannolikheter beroende på kontext (villkorstabell) failar nu loud (`FlipError`, "olika sannolikheter beroende på kontext") istället för att gissa. `ensureVocInvariant` anropas inte längre internt (full vändning garanterar inte EV-ökning — en beslutsnod kan hamna sämre ställd om den flyttas före information den berodde på) men behålls exporterad för framtida bruk.
+
+**Verifiering (kritisk, given hur stor ändringen är):** Hand-räknade tre nya fall och jämförde mot faktisk kod-output (matchade exakt i alla tre, vilket bekräftar algoritmen fungerar som avsett):
+1. Weather(chans, redan rot)→Act(beslut): EV_vänster=5.9 (oförändrat), EV_höger=3.5 (Act blir NY rot, Weather flyttas efter) — INTE längre ett no-op fast chansen redan låg först.
+2. Väder→Åtgärd (från `variable.test.ts`): samma mönster, EV_vänster=4.4, EV_höger=3.2.
+3. Djupt 4-nivåträd (`bayesReversal.scenarios.test.ts` scenario 5): EV_vänster=7 (oförändrat), EV_höger=5.4 (ny rot = D2, djupast ursprungliga nod).
+
+**Live-verifierat** (JS-driven DOM mot dev-servern): byggde exakt fall 1 ovan i den riktiga appen → Flip → höger pill-bar `[Act, Weather, Weather]`, VOC-raden "EV vänster = 5.9 · EV höger = 3.5 · VOC = 2.4" — matchar testen exakt. Byggde även ett kontext-beroende C2-under-C1-via-en-beslutsnod-träd; eftersom C2 i den konstruktionen bara förekom på EN väg (ingen duplicering att jämföra mot) uppstod ingen konflikt — korrekt beteende, inte en miss (konfliktfallet är separat hand-verifierat i `bayesReversal.test.ts`). Inga konsolfel.
+
+**Testresultat:** 251 gröna (oförändrat antal — 9 omskrivna, inga nya krävdes utöver de omskrivna). De fem "bevisade" scenarierna räknades om för hand mot den nya algoritmen:
+- Scenario 1 (2 variabler) och scenario 4 (samma) — **oförändrade siffror**, eftersom en 2-variabel-sekvens av olika typ ger identiskt resultat oavsett om man "grupperar chans före beslut" eller "vänder rakt av".
+- Scenario 2 (villkorstabell, C2 beror på C1) — **failar nu loud** istället för att ge VOC=1; det var den nya avsedda konsekvensen (C1 hamnar efter C2 i den vända ordningen, ingen entydig fördelning).
+- Scenario 3 och 6 (länkade grupper, samma fördelning på alla instanser) — **oförändrade siffror** trots att den interna byggordningen skiljer sig (strukturell symmetri: en beslutsnod som hamnar mellan de två chansvariablerna gör ändå samma val oavsett given full information om båda, så slutresultatet sammanfaller).
+- Scenario 5 (djupt blandat träd) — nya regressions-pinnade tal (EV_vänster=7, EV_höger=5.4), "VOC ≥ 0"-antagandet borttaget (gäller inte längre generellt).
+
+**Judgment calls:**
+1. **Rörde INTE `visit()`s canonical-uppbyggnad eller dupliceringsregeln.** Dessa hanterar "vilken variabel finns på vilket djup, och vad gör vi med grenar som terminerar tidigt" — helt oberoende av i vilken ORDNING vi sen bygger det nya trädet. Minimal, precis ändring (bara `order`-beräkningen + `distGroups`-nyckeln) höll risken nere för en annars stor omskrivning.
+2. **`ensureVocInvariant` behålls exporterad men anropas inte längre i `reverseTreeWithBayes`.** Den representerar ett invariant (VOC≥0) som bara gäller den GAMLA klassiska klarsyns-definitionen, inte den nya positionella vändningen. Behöll den som fristående verktyg (testad direkt) ifall den blir relevant igen, snarare än att radera.
+3. **`FlipResult.voc`/`.originalEv`/`.flippedEv` behölls i returtypen** (bakåtkompatibelt för tester) men är nu rent informativa — appens FAKTISKA VOC-display (`|EV_vänster − EV_höger|`, segment 21) beräknas oberoende i `app.ts` och läser aldrig dessa fält.
+
+---
+
 ## 2026-08-03 (segment 21) — Flip/VOC-omarbetning: redigerbart höger träd, VOC = |diff|, pill-sekvensbar
 
 Fyra relaterade ändringar i flip/VOC-systemet (större segment).

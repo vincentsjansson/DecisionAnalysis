@@ -83,21 +83,23 @@ describe('reverseTreeWithBayes — classic asymmetric case with duplication', ()
   })
 })
 
-describe('reverseTreeWithBayes — two chance variables with path-dependent distributions', () => {
+describe('reverseTreeWithBayes — a chance node whose distribution depends on context', () => {
   /**
    * Bet (decision)
    * ├─ "Yes" -> C1 (chance): A 0.4 -> C2a, B 0.6 -> C2b
-   * │            C2a: H 0.9 -> 10, T 0.1 -> 0
+   * │            C2a: H 0.9 -> 10, T 0.1 -> 0   (C2's distribution depends on C1!)
    * │            C2b: H 0.5 -> 2,  T 0.5 -> 4
    * └─ "No"  -> 5
    *
-   * EV(Yes) = 0.4(0.9·10 + 0.1·0) + 0.6(0.5·2 + 0.5·4) = 3.6 + 1.8 = 5.4
-   * EV(original) = max(5.4, 5) = 5.4
-   * Flipped: C1 -> C2 -> Bet with P(C2|C1) preserved per context:
-   * EV(flipped) = 0.4[0.9·max(10,5) + 0.1·max(0,5)]
-   *             + 0.6[0.5·max(2,5) + 0.5·max(4,5)]
-   *             = 0.4·9.5 + 0.6·5 = 3.8 + 3 = 6.8
-   * VOC = 1.4
+   * Under the OLD chance-before-decision algorithm this flipped fine — C1
+   * always preceded C2 in the reversed tree, so C2's context (which C1 branch)
+   * was always already known by the time C2 needed a distribution. Under FULL
+   * sequence reversal (segment 22), the whole order reverses: C2 (originally
+   * deepest) is now built BEFORE C1 (originally shallowest) — so at the point
+   * C2 needs a distribution, C1's value isn't chosen yet. Since probabilities
+   * are carried unchanged (no Bayesian recomputation), there's no way to know
+   * which of C2's two distributions (0.9/0.1 vs 0.5/0.5) applies — this must
+   * fail loud rather than guess.
    */
   function twoChanceTree() {
     const root = new TreeNode('d', 'decision', 'Bet')
@@ -118,29 +120,32 @@ describe('reverseTreeWithBayes — two chance variables with path-dependent dist
     return root
   }
 
-  it('computes the hand-calculated VOC and preserves per-context distributions', () => {
-    const result = flip(twoChanceTree())
-    expect(result.originalEv).toBeCloseTo(5.4)
-    expect(result.flippedEv).toBeCloseTo(6.8)
-    expect(result.voc).toBeCloseTo(1.4)
-
-    const { flipped } = result
-    expect(flipped.label).toBe('C1')
-    const underA = flipped.outcomes.find((o) => o.label === 'A')!.child!
-    const underB = flipped.outcomes.find((o) => o.label === 'B')!.child!
-    expect(underA.label).toBe('C2')
-    expect(underA.outcomes.find((o) => o.label === 'H')!.probability).toBeCloseTo(0.9)
-    expect(underB.outcomes.find((o) => o.label === 'H')!.probability).toBeCloseTo(0.5)
-    // Last level is the decision with duplicated "No" payoff 5 everywhere.
-    const decision = underA.outcomes[0].child!
-    expect(decision.nodeType).toBe('decision')
-    expect(decision.outcomes.find((o) => o.label === 'No')!.value).toBe(5)
+  it('fails loud: C2 depends on C1, which would end up placed after it', () => {
+    expect(() => flip(twoChanceTree())).toThrow(FlipError)
+    expect(() => flip(twoChanceTree())).toThrow(/olika sannolikheter beroende på kontext/)
   })
 
-  it('VOC equals EV(flipped) − EV(original) recomputed independently', () => {
-    const original = twoChanceTree()
-    const { flipped, voc } = flip(original)
-    expect(voc).toBeCloseTo(calculateExpectedValue(flipped) - calculateExpectedValue(original))
+  it('a chance node with NO context-dependence still flips fine (control case)', () => {
+    // Same shape, but C2 has the SAME distribution everywhere -> no conflict.
+    const root = new TreeNode('d', 'decision', 'Bet')
+    const yes = addOutcome(root, 'Yes')
+    addOutcome(root, 'No', NaN, 5)
+    const c1 = new TreeNode('c1', 'chance', 'C1')
+    setChild(root, yes, c1)
+    const a = addOutcome(c1, 'A', 0.4)
+    const b = addOutcome(c1, 'B', 0.6)
+    const c2a = new TreeNode('c2a', 'chance', 'C2')
+    setChild(c1, a, c2a)
+    addOutcome(c2a, 'H', 0.9, 10)
+    addOutcome(c2a, 'T', 0.1, 0)
+    const c2b = new TreeNode('c2b', 'chance', 'C2')
+    setChild(c1, b, c2b)
+    addOutcome(c2b, 'H', 0.9, 2) // same 0.9/0.1 as c2a — no context-dependence
+    addOutcome(c2b, 'T', 0.1, 4)
+
+    expect(() => flip(root)).not.toThrow()
+    const { flipped, voc } = flip(root)
+    expect(voc).toBeCloseTo(calculateExpectedValue(flipped) - calculateExpectedValue(root))
   })
 })
 
@@ -179,7 +184,7 @@ describe('reverseTreeWithBayes — scope validation', () => {
     expect(() => flip(root)).toThrow(/samma utfall överallt/)
   })
 
-  it('rejects chance distributions that depend on the decision branch', () => {
+  it('rejects chance distributions that differ by context (any ancestor, not just decisions)', () => {
     const root = new TreeNode('d', 'decision', 'Bet')
     const yes = addOutcome(root, 'Yes')
     const no = addOutcome(root, 'No')
@@ -192,7 +197,7 @@ describe('reverseTreeWithBayes — scope validation', () => {
     addOutcome(w2, 'Rain', 0.5, 3)
     addOutcome(w2, 'Sun', 0.5, 4)
 
-    expect(() => flip(root)).toThrow(/skiljer sig mellan grenar/)
+    expect(() => flip(root)).toThrow(/olika sannolikheter beroende på kontext/)
   })
 
   it('rejects a duplicate variable label at two levels', () => {
@@ -272,8 +277,12 @@ describe('reverseTreeWithBayes — variableId-based matching', () => {
 })
 
 describe('reverseTreeWithBayes — edge cases and invariants', () => {
-  it('is a VOC = 0 no-op when chance already precedes the decision', () => {
+  it('full reversal is NEVER a no-op for two different-typed variables, even chance-first', () => {
     // Weather (chance): Rain 0.3 -> D(Stop 0 / Go 8), Sun 0.7 -> D(Stop 5 / Go 1)
+    // Weather already precedes Act — under the OLD chance-first algorithm this
+    // was a no-op (VOC=0). Under full reversal (segment 22), Act and Weather
+    // swap places regardless (a→b always becomes b→a), so this is genuinely
+    // NOT a no-op anymore: the new root is Act (decision), Weather comes after.
     const root = new TreeNode('w', 'chance', 'Weather')
     const rain = addOutcome(root, 'Rain', 0.3)
     const sun = addOutcome(root, 'Sun', 0.7)
@@ -287,10 +296,15 @@ describe('reverseTreeWithBayes — edge cases and invariants', () => {
     addOutcome(d2, 'Go', NaN, 1)
 
     const result = flip(root)
-    // EV = 0.3·max(0,8) + 0.7·max(5,1) = 2.4 + 3.5 = 5.9 in both trees.
+    // Original (unchanged): EV = 0.3·max(0,8) + 0.7·max(5,1) = 2.4 + 3.5 = 5.9.
     expect(result.originalEv).toBeCloseTo(5.9)
-    expect(result.flippedEv).toBeCloseTo(5.9)
-    expect(result.voc).toBe(0)
+    expect(result.flipped.nodeType).toBe('decision')
+    expect(result.flipped.label).toBe('Act')
+    // Reversed: Act(root) -> Weather -> payoff. Under Act=Stop: Weather(Rain=0.3
+    // ->0, Sun=0.7->5) = 3.5. Under Act=Go: Weather(Rain=0.3->8, Sun=0.7->1) =
+    // 2.4+0.7=3.1. Act is a decision -> max(3.5, 3.1) = 3.5.
+    expect(result.flippedEv).toBeCloseTo(3.5)
+    expect(result.voc).toBeCloseTo(3.5 - 5.9)
   })
 
   it('propagates NaN for unset probabilities instead of fabricating a VOC', () => {
@@ -347,9 +361,11 @@ describe('reverseTreeWithBayes — edge cases and invariants', () => {
       expect(r.flipped.nodeType).toBe('chance')
     })
 
-    it('chance root already ahead of every decision correctly gives VOC 0', () => {
-      // Weather(chance) -> Bet(decision): the chance is already observed before
-      // deciding, so clairvoyance adds nothing. VOC 0 here is CORRECT, not a bug.
+    it('reverses even when chance already precedes the decision (full reversal, not a no-op)', () => {
+      // Weather(chance) -> Bet(decision). Under the OLD chance-first algorithm
+      // this was a no-op (chance already first). Under full reversal (segment
+      // 22) the whole sequence flips regardless: Bet becomes root, Weather
+      // moves after it — so this is NOT VOC=0 anymore.
       const root = new TreeNode('w', 'chance', 'Weather')
       const sun = addOutcome(root, 'Sun', 0.5)
       const rain = addOutcome(root, 'Rain', 0.5)
@@ -361,7 +377,16 @@ describe('reverseTreeWithBayes — edge cases and invariants', () => {
       }
       setChild(root, sun, bet('a', 10))
       setChild(root, rain, bet('b', 0))
-      expect(flip(root).voc).toBeCloseTo(0)
+      const r = flip(root)
+      expect(r.flipped.nodeType).toBe('decision')
+      expect(r.flipped.label).toBe('Bet')
+      // Original: Sun(0.5)->max(10,5)=10; Rain(0.5)->max(0,5)=5. EV=0.5*10+0.5*5=7.5.
+      expect(r.originalEv).toBeCloseTo(7.5)
+      // Reversed: Bet(root) -> Weather -> payoff. Under Bet=Yes: Weather(Sun=0.5
+      // ->10, Rain=0.5->0)=5. Under Bet=No: Weather(Sun=0.5->5,Rain=0.5->5)=5.
+      // Bet is a decision -> max(5,5)=5.
+      expect(r.flippedEv).toBeCloseTo(5)
+      expect(r.voc).toBeCloseTo(5 - 7.5)
     })
   })
 })

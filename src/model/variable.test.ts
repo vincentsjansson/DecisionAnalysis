@@ -386,12 +386,19 @@ describe('mirrorLinkedInstances — grow the same variable across the parent gro
     act2.outcomes.find((o) => o.label === 'Vänta')!.value = 4
     act2.outcomes.find((o) => o.label === 'Agera')!.value = 1
 
-    // Väder already precedes the decision (clairvoyance order) so flip is a
-    // no-op: VOC = 0 with no FlipError — proving both Åtgärd instances are
-    // recognized as the same variable (else it would reject as a mismatch).
+    // No FlipError -- proving both Åtgärd instances are recognized as the same
+    // variable (else it would reject as a mismatch). Under full sequence
+    // reversal (segment 22) this is NOT a no-op even though Väder already
+    // precedes the decision: Åtgärd becomes the new root, Väder moves after.
     const result = reverseTreeWithBayes(root)
     expect(result.originalEv).toBeCloseTo(0.4 * 5 + 0.6 * 4) // 4.4
-    expect(result.voc).toBe(0)
+    expect(result.flipped.nodeType).toBe('decision')
+    expect(result.flipped.label).toBe('Åtgärd')
+    // Reversed: Åtgärd(root) -> Väder -> payoff. Under Vänta: Väder(Regn=0.4->2,
+    // Sol=0.6->4)=0.8+2.4=3.2. Under Agera: Väder(Regn=0.4->5,Sol=0.6->1)=2+0.6=2.6.
+    // Åtgärd is a decision -> max(3.2, 2.6) = 3.2.
+    expect(result.flippedEv).toBeCloseTo(3.2)
+    expect(result.voc).toBeCloseTo(3.2 - 4.4)
   })
 })
 

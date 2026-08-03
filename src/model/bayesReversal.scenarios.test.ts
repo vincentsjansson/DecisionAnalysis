@@ -32,26 +32,21 @@ describe('flip/VOC — scenario 1: simple symmetric tree (sanity, no regression)
   })
 })
 
-describe('flip/VOC — scenario 2: conditional probability tables (the legacy-broken case)', () => {
+describe('flip/VOC — scenario 2: conditional probability tables', () => {
   /**
    * C1 (chance) x 0.5 / y 0.5, then a decision D, then a chance C2 whose
    * distribution is CONDITIONAL on C1 (strongly correlated):
    *   P(C2 | C1=x) = p 0.9 / q 0.1 ;  P(C2 | C1=y) = p 0.1 / q 0.9.
-   * Payoffs depend on the decision alternative and C2:
-   *   a1: p->10, q->0 ;  a2: p->0, q->10.
    *
-   * Original (decide after seeing C1, before C2):
-   *   C1=x: EV(a1)=0.9·10=9, EV(a2)=0.1·10=1 -> max 9
-   *   C1=y: EV(a1)=0.1·10=1, EV(a2)=0.9·10=9 -> max 9
-   *   EV(orig) = 0.5·9 + 0.5·9 = 9.
-   * Flipped (know C2 before deciding, given C1):
-   *   C1=x: 0.9·max(10,0) + 0.1·max(0,10) = 0.9·10 + 0.1·10 = 10
-   *   C1=y: 0.1·10 + 0.9·10 = 10
-   *   EV(flip) = 10. VOC = 1.
-   *
-   * If the reversal IGNORED the conditional table and used the base 0.5/0.5,
-   * it would compute EV(orig)=5, EV(flip)=10, VOC=5 — so this pins the
-   * conditional handling to VOC=1, not 5.
+   * Under the OLD chance-before-decision algorithm (pre-2026-08-03), this
+   * flipped correctly (VOC=1) because C1 always preceded C2 in the reversed
+   * tree, so C2's context was always already known. Under FULL sequence
+   * reversal (segment 22, 2026-08-03/04), the entire order reverses: C2
+   * (originally deepest) is now built BEFORE C1 (originally shallowest) — so
+   * C2's context-dependent distribution can no longer be resolved (its
+   * determining ancestor hasn't been chosen yet), and this now fails loud
+   * instead of silently picking a distribution. This is the correct behavior
+   * for the new algorithm — see bayesReversal.ts's doc comment.
    */
   function conditionalTree() {
     const c1 = new TreeNode('C1', 'chance', 'C1')
@@ -88,13 +83,10 @@ describe('flip/VOC — scenario 2: conditional probability tables (the legacy-br
     expect(calculateExpectedValue(conditionalTree())).toBeCloseTo(9)
   })
 
-  it('reversal preserves the conditional distribution through the flip (VOC = 1, not 5)', () => {
-    const r = reverseTreeWithBayes(conditionalTree())
-    expect(r.originalEv).toBeCloseTo(9)
-    expect(r.flippedEv).toBeCloseTo(10)
-    expect(r.voc).toBeCloseTo(1)
-    // Independent recomputation of the flipped EV must agree.
-    expect(r.flippedEv).toBeCloseTo(calculateExpectedValue(r.flipped))
+  it('fails loud instead of silently picking one of C2\'s context-dependent distributions', () => {
+    expect(() => reverseTreeWithBayes(conditionalTree())).toThrow(
+      /olika sannolikheter beroende på kontext/,
+    )
   })
 })
 
@@ -187,12 +179,17 @@ describe('flip/VOC — scenario 5: deep tree, mixed chance and decision', () => 
   /**
    * Four levels: C1(chance) -> D1(decision) -> C2(chance) -> D2(decision) -> payoff.
    * Symmetric (both C1 outcomes lead to the same D1 structure, etc.), decisions
-   * linked by name. Flip moves both chance variables ahead of both decisions.
-   * Rather than hand-calculating the full 4-level EV, this pins the core
-   * invariants: no error, VOC >= 0, and the reported flippedEv/originalEv match
-   * an independent recomputation, so the reversal is internally consistent.
+   * linked by name, no conditional tables (C2 has the same 0.6/0.4 distribution
+   * everywhere) so full reversal is compatible (no context-dependence conflict).
+   *
+   * Under FULL sequence reversal (segment 22), order = [D2, C2, D1, C1] (fully
+   * reversed, not chance-first) — the new root is D2, a decision. Since a full
+   * reversal is no longer "value of clairvoyance" (a decision can end up before
+   * information it originally depended on), VOC is NOT guaranteed ≥ 0 anymore —
+   * this pins the actual computed values (verified via independent
+   * recomputation) rather than asserting an invariant that no longer holds.
    */
-  it('flips a 4-level mixed tree consistently with VOC >= 0', () => {
+  it('flips a 4-level mixed tree; reports match independent recomputation', () => {
     // Build one D1 subtree factory used under both C1 outcomes.
     const buildD1 = (tag: string): TreeNode => {
       const d1 = new TreeNode(`D1_${tag}`, 'decision', 'D1')
@@ -226,12 +223,18 @@ describe('flip/VOC — scenario 5: deep tree, mixed chance and decision', () => 
     const r = reverseTreeWithBayes(c1)
     expect(Number.isFinite(r.originalEv)).toBe(true)
     expect(Number.isFinite(r.flippedEv)).toBe(true)
-    expect(r.voc).toBeGreaterThanOrEqual(0)
+    // The new root is D2 (a decision), since order is fully reversed.
+    expect(r.flipped.nodeType).toBe('decision')
+    expect(r.flipped.label).toBe('D2')
     // Internal consistency: reported EVs match independent recomputation.
     expect(r.originalEv).toBeCloseTo(calculateExpectedValue(c1))
     expect(r.flippedEv).toBeCloseTo(calculateExpectedValue(r.flipped))
-    // Perfect information is worth at least as much as acting blind.
-    expect(r.flippedEv).toBeGreaterThanOrEqual(r.originalEv - 1e-9)
+    // Regression-pinned actual values (hand-verifying a full 4-level reversal
+    // by hand is impractical; correctness rests on the independent-
+    // recomputation check above plus the simpler cases hand-verified elsewhere).
+    expect(r.originalEv).toBeCloseTo(7)
+    expect(r.flippedEv).toBeCloseTo(5.4)
+    expect(r.voc).toBeCloseTo(5.4 - 7)
   })
 })
 
@@ -284,8 +287,8 @@ describe('flip/VOC — scenario 6: linked chance group folds into ONE shared nod
 
   it('fails loud when the linked instances have decision-dependent distributions', () => {
     // Different distributions across the decision branches means okejdå's
-    // outcome depends on the choice -> clairvoyance is undefined -> throw,
+    // outcome depends on the choice -> the reversal is undefined -> throw,
     // rather than fabricating a folded node from inconsistent probabilities.
-    expect(() => reverseTreeWithBayes(build(false))).toThrow(/skiljer sig mellan grenar/)
+    expect(() => reverseTreeWithBayes(build(false))).toThrow(/olika sannolikheter beroende på kontext/)
   })
 })
