@@ -8,9 +8,18 @@ export type DocumentDisplayMode = 'ev' | 'eu'
 
 /** The full editor state a save file captures: the tree plus the settings
  * needed to reproduce the displayed values (EV vs EU/CE + utility function)
- * and the id counter so newly-created nodes don't collide with loaded ones. */
+ * and the id counter so newly-created nodes don't collide with loaded ones.
+ *
+ * As of the editable-right-tree change, the flipped/clairvoyance tree is no
+ * longer always recomputable from the left (the user may edit it freely), so
+ * BOTH trees are persisted. `rightTree` is null until the first flip;
+ * `rightEdited` records whether it has diverged from its Bayes baseline (drives
+ * the deviation indicator); `split` remembers whether the split view was open. */
 export interface DecisionDocument {
   tree: TreeNode | null
+  rightTree: TreeNode | null
+  rightEdited: boolean
+  split: boolean
   displayMode: DocumentDisplayMode
   utility: UtilityFunction
   idCounter: number
@@ -23,10 +32,15 @@ export interface SerializedDocument {
   utility: { type: UtilityType; parameter: number }
   id_counter: number
   tree: SerializedTreeNode | null
+  right_tree: SerializedTreeNode | null
+  right_edited: boolean
+  split: boolean
 }
 
 export const DOCUMENT_FORMAT = 'decision-analysis'
-export const DOCUMENT_VERSION = 1
+// v2 added right_tree / right_edited / split. v1 files still load (missing
+// fields default to no right tree, not edited, single view).
+export const DOCUMENT_VERSION = 2
 
 export class DocumentError extends Error {
   constructor(message: string) {
@@ -43,6 +57,9 @@ export function serializeDocument(doc: DecisionDocument): SerializedDocument {
     utility: { type: doc.utility.type, parameter: doc.utility.parameter },
     id_counter: doc.idCounter,
     tree: doc.tree ? serializeTree(doc.tree) : null,
+    right_tree: doc.rightTree ? serializeTree(doc.rightTree) : null,
+    right_edited: doc.rightEdited,
+    split: doc.split,
   }
 }
 
@@ -169,11 +186,27 @@ export function deserializeDocument(text: string): DecisionDocument {
     validateVariableGroups(tree)
   }
 
+  // Right (clairvoyance) tree: v2+. Absent in v1 files -> null (single view).
+  let rightTree: TreeNode | null = null
+  if (raw.right_tree !== null && raw.right_tree !== undefined) {
+    rightTree = deserializeTree(validateNode(raw.right_tree, 'right_tree'))
+    validateVariableGroups(rightTree)
+  }
+  if (raw.right_edited !== undefined && typeof raw.right_edited !== 'boolean') {
+    throw new DocumentError('"right_edited" måste vara true eller false.')
+  }
+  if (raw.split !== undefined && typeof raw.split !== 'boolean') {
+    throw new DocumentError('"split" måste vara true eller false.')
+  }
+
   return {
     tree,
+    rightTree,
+    rightEdited: raw.right_edited === true,
+    split: raw.split === true,
     displayMode: raw.display_mode,
     utility: { type: raw.utility.type as UtilityType, parameter: raw.utility.parameter },
-    idCounter: Math.max(savedCounter, highestNumericId(tree)),
+    idCounter: Math.max(savedCounter, highestNumericId(tree), highestNumericId(rightTree)),
   }
 }
 

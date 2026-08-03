@@ -258,6 +258,31 @@ export function renameOutcomeInGroup(
   }
 }
 
+/** Reorders `node`'s outcomes — moving the outcome at index `from` to index
+ * `to` — and applies the SAME label order to every linked instance in the
+ * group. Outcome ORDER is part of the group's uniform presentation, like the
+ * outcome set, node type and (table-free) probabilities: keeping it in sync
+ * means the instances and their pill bars stay consistent. Order is purely
+ * presentational — flip/VOC and probability sync all match by label — so this
+ * never changes any computed value. No-op when `from === to` or out of range. */
+export function reorderOutcomeInGroup(
+  root: TreeNode,
+  node: TreeNode,
+  from: number,
+  to: number,
+): void {
+  const n = node.outcomes.length
+  if (from === to || from < 0 || to < 0 || from >= n || to >= n) return
+  const [moved] = node.outcomes.splice(from, 1)
+  node.outcomes.splice(to, 0, moved)
+  const order = node.outcomes.map((o) => o.label)
+  const rank = new Map(order.map((label, i) => [label, i]))
+  for (const inst of collectGroup(root, node.variableId)) {
+    if (inst === node) continue
+    inst.outcomes.sort((a, b) => (rank.get(a.label) ?? 0) - (rank.get(b.label) ?? 0))
+  }
+}
+
 /** Renames the whole variable (base name) — propagates to every instance in
  * the group (locked decision A). Rejects a collision with a *different*
  * existing variable's base name. */

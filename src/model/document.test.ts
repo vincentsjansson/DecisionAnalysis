@@ -15,17 +15,26 @@ function roundTrip(doc: DecisionDocument): DecisionDocument {
   return deserializeDocument(documentToJson(doc))
 }
 
+/** Fills the right-tree fields with their single-view defaults, so tests that
+ * only care about the left tree/settings stay terse. */
+function mkDoc(
+  fields: Omit<DecisionDocument, 'rightTree' | 'rightEdited' | 'split'> &
+    Partial<Pick<DecisionDocument, 'rightTree' | 'rightEdited' | 'split'>>,
+): DecisionDocument {
+  return { rightTree: null, rightEdited: false, split: false, ...fields }
+}
+
 describe('document round-trip', () => {
   it('round-trips a simple tree with display/utility settings', () => {
     const root = new TreeNode('n1', 'chance', 'Väder')
     addOutcome(root, 'Regn', 0.3, 8)
     addOutcome(root, 'Sol', 0.7, 2)
-    const doc: DecisionDocument = {
+    const doc = mkDoc({
       tree: root,
       displayMode: 'eu',
       utility: { type: 'exponential', parameter: 0.1 },
       idCounter: 1,
-    }
+    })
     const restored = roundTrip(doc)
     expect(restored.displayMode).toBe('eu')
     expect(restored.utility).toEqual<UtilityFunction>({ type: 'exponential', parameter: 0.1 })
@@ -56,12 +65,12 @@ describe('document round-trip', () => {
       { condition: new Set(['n1:1']), probabilities: { a: 0.9, b: 0.1 } },
     ]
 
-    const doc: DecisionDocument = {
+    const doc = mkDoc({
       tree: test,
       displayMode: 'eu',
       utility: { type: 'exponential', parameter: 0.25 },
       idCounter: counter,
-    }
+    })
     const restored = roundTrip(doc)
 
     // Exact structural identity (ids, variableId groupings, instance indices,
@@ -85,22 +94,22 @@ describe('document round-trip', () => {
   it('raises idCounter above the highest existing id even if the file counter is stale', () => {
     const root = new TreeNode('n7', 'chance', 'X')
     addOutcome(root, 'a', 1, 1)
-    const doc: DecisionDocument = {
+    const doc = mkDoc({
       tree: root,
       displayMode: 'ev',
       utility: { type: 'linear', parameter: 0 },
       idCounter: 2, // stale, below the n7 id
-    }
+    })
     expect(roundTrip(doc).idCounter).toBe(7)
   })
 
   it('round-trips an empty document (no tree)', () => {
-    const doc: DecisionDocument = {
+    const doc = mkDoc({
       tree: null,
       displayMode: 'ev',
       utility: { type: 'linear', parameter: 0 },
       idCounter: 0,
-    }
+    })
     const restored = roundTrip(doc)
     expect(restored.tree).toBeNull()
   })
@@ -204,15 +213,15 @@ describe('documentFilename', () => {
 
 describe('serializeDocument', () => {
   it('tags the format and version', () => {
-    const doc: DecisionDocument = {
+    const doc = mkDoc({
       tree: null,
       displayMode: 'ev',
       utility: { type: 'linear', parameter: 0 },
       idCounter: 0,
-    }
+    })
     const s = serializeDocument(doc)
     expect(s.format).toBe('decision-analysis')
-    expect(s.version).toBe(1)
+    expect(s.version).toBe(2)
   })
 })
 

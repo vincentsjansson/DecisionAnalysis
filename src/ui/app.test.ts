@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import type { TreeNode } from '../model/tree'
+import type { Outcome, TreeNode } from '../model/tree'
 import { validateProbabilities } from '../model/validateProbabilities'
 import { collectGroup } from '../model/variable'
 import { createApp, distributeSumToOne } from './app'
@@ -164,7 +164,7 @@ describe('createApp', () => {
     void container
   })
 
-  it('split mode: flip renders both trees, edits re-flip live, merge discards', () => {
+  it('split mode: flip generates an editable, independent right tree; merge keeps it', () => {
     const { app, container } = newApp()
     // Classic tree: Bet(decision): Yes -> Weather(Rain 0.3 -> 8, Sun 0.7 -> 2), No -> 3.
     const root = app.api.createRoot('decision', 'Bet')
@@ -182,8 +182,6 @@ describe('createApp', () => {
 
     // Both trees rendered; right is the flipped one (Weather at its root).
     expect(rightPane.style.display).not.toBe('none')
-    expect(rightPane.textContent).toContain('klarsyn')
-    // flip_1 is the flipped tree's root — the chance variable moved first.
     expect(
       container.querySelector('.canvas-right [data-node-id="flip_1"] .node-label')!.textContent,
     ).toBe('Weather')
@@ -191,28 +189,37 @@ describe('createApp', () => {
       (n) => n.textContent,
     )
     expect(rightLabels).toContain('Bet')
-    // Hand-calculated: EV orig 3.8, EV flipped 4.5, VOC 0.7.
-    expect(vocBar.textContent).toContain('EV original = 3.8')
-    expect(vocBar.textContent).toContain('4.5')
+    // Direction-agnostic VOC = |EV_left − EV_right|; fresh flip = classic 0.7.
+    expect(vocBar.textContent).toContain('EV vänster = 3.8')
+    expect(vocBar.textContent).toContain('EV höger = 4.5')
     expect(vocBar.textContent).toContain('VOC = 0.7')
 
-    // Editing the left tree re-flips the right side live.
+    // The right tree is now its own independent state (not re-derived each render).
+    const rightRootBefore = app.state.rightRoot
+    expect(rightRootBefore).not.toBeNull()
+
+    // Editing the LEFT tree does NOT change the right tree structure (independent).
     app.api.setProbability(rain, 0.6)
     app.api.setProbability(sun, 0.4)
-    // New: EV orig = max(0.6·8+0.4·2, 3) = 5.6; flipped = 0.6·8+0.4·3 = 6; VOC 0.4.
-    expect(vocBar.textContent).toContain('VOC = 0.4')
+    expect(app.state.rightRoot).toBe(rightRootBefore) // same object, untouched
+    // EV_left = max(0.6·8+0.4·2, 3) = 5.6; EV_right still the frozen 4.5; VOC = 1.1.
+    expect(vocBar.textContent).toContain('EV vänster = 5.6')
+    expect(vocBar.textContent).toContain('EV höger = 4.5')
+    expect(vocBar.textContent).toContain('VOC = 1.1')
 
-    // The right tree is read-only: clicking its nodes opens no menu.
+    // The right tree is EDITABLE: clicking a right node opens the context menu.
     container
       .querySelector('.canvas-right [data-node-id]')!
       .dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    expect(container.querySelector('.menu')).toBeNull()
+    expect(container.querySelector('.menu')).not.toBeNull()
 
-    // Merge back: right pane and VOC bar hidden, left tree intact.
+    // Merge back: right pane and VOC bar hidden, but the right tree is KEPT
+    // (persisted), and the left tree is intact.
     app.api.toggleSplit()
     expect(rightPane.style.display).toBe('none')
     expect(vocBar.style.display).toBe('none')
     expect(app.state.root).toBe(root)
+    expect(app.state.rightRoot).not.toBeNull()
     expect(container.querySelector('.canvas-right svg')).toBeNull()
   })
 
@@ -310,7 +317,9 @@ describe('createApp', () => {
     app.api.toggleSplit()
 
     const voc = container.querySelector('.voc-bar')!.textContent!
-    expect(voc).toContain('CE original')
+    // VOC is now direction-agnostic: |CE_left − CE_right|.
+    expect(voc).toContain('CE vänster')
+    expect(voc).toContain('CE höger')
     expect(voc).toContain('VOC (CE)')
   })
 
@@ -744,8 +753,10 @@ describe('createApp', () => {
       app.api.toggleSplit()
 
       const vocBar = container.querySelector('.voc-bar')!
-      expect(vocBar.textContent).toContain('EV original = 3.8')
-      expect(vocBar.textContent).toContain('EV omvänt (klarsyn) = 4.5')
+      // Direction-agnostic VOC = |EV_left − EV_right|; a fresh flip still equals
+      // the classic clairvoyance value (0.7 here).
+      expect(vocBar.textContent).toContain('EV vänster = 3.8')
+      expect(vocBar.textContent).toContain('EV höger = 4.5')
       expect(vocBar.textContent).toContain('VOC = 0.7')
 
       // The always-on explanation of what VOC means is visible in split mode.
@@ -753,8 +764,10 @@ describe('createApp', () => {
       expect(vocHint.style.display).toBe('')
       expect(vocHint.textContent).toContain('värdet av klarsyn')
 
-      // The read-only tree is clearly labelled.
-      expect(container.querySelector('.pane-caption')!.textContent).toContain('skrivskyddat')
+      // The right tree is now editable (not read-only) and the deviation badge
+      // is hidden until it is actually edited.
+      expect(container.querySelector('.pane-caption')!.textContent).toContain('redigerbart')
+      expect((container.querySelector('.deviation-badge') as HTMLElement).style.display).toBe('none')
     })
 
     it('fails loud (not a silent –) when probabilities/payoffs are missing', () => {
@@ -1293,3 +1306,237 @@ function allNodesIn(root: TreeNode): TreeNode[] {
   walk(root)
   return out
 }
+
+describe('editable right tree (flip/VOC rework)', () => {
+  // Simple left tree: chance "Väder" Sol 0.5 -> 10 / Regn 0.5 -> 0. EV = 5.
+  // Flip of a pure chance tree is a structural no-op, so the right tree is the
+  // same shape and starts at EV 5 too (VOC 0) — a clean base to edit freely.
+  function buildSimple(app: ReturnType<typeof newApp>['app']) {
+    const root = app.api.createRoot('chance', 'Väder')
+    app.api.addOutcomeTo(root, 'Sol', 0.5, 10)
+    app.api.addOutcomeTo(root, 'Regn', 0.5, 0)
+    return root
+  }
+  const rightLeaf = (app: ReturnType<typeof newApp>['app'], label: string): Outcome =>
+    allNodesIn(app.state.rightRoot!)
+      .flatMap((n) => n.outcomes)
+      .find((o) => o.label === label)!
+
+  it('right tree is editable and the edit survives a save -> load round-trip', () => {
+    const { app } = newApp()
+    buildSimple(app)
+    app.api.toggleSplit()
+    expect(app.state.rightRoot).not.toBeNull()
+
+    // Edit a payoff on the RIGHT tree.
+    app.api.setValue(rightLeaf(app, 'Sol'), 99)
+    expect(app.state.rightEdited).toBe(true)
+
+    const json = app.api.exportDocument()
+
+    // Load into a fresh app: the right tree, its edit, deviation flag and split
+    // state must all come back — no silent data loss.
+    const { app: app2 } = newApp()
+    expect(app2.api.loadDocument(json, { skipConfirm: true })).toBe(true)
+    expect(app2.state.rightRoot).not.toBeNull()
+    expect(app2.state.split).toBe(true)
+    expect(app2.state.rightEdited).toBe(true)
+    const sol = allNodesIn(app2.state.rightRoot!)
+      .flatMap((n) => n.outcomes)
+      .find((o) => o.label === 'Sol')!
+    expect(sol.value).toBe(99)
+  })
+
+  it('adding a node to the right tree persists through save -> load', () => {
+    const { app } = newApp()
+    buildSimple(app)
+    app.api.toggleSplit()
+    const solEdge = rightLeaf(app, 'Sol')
+    const solNode = allNodesIn(app.state.rightRoot!).find((n) => n.outcomes.includes(solEdge))!
+    app.api.attachChild(solNode, solEdge, 'chance', 'Extra')
+    expect(app.state.rightEdited).toBe(true)
+
+    const json = app.api.exportDocument()
+    const { app: app2 } = newApp()
+    app2.api.loadDocument(json, { skipConfirm: true })
+    const labels = allNodesIn(app2.state.rightRoot!).map((n) => n.label)
+    expect(labels).toContain('Extra')
+  })
+
+  it('deviation indicator appears only after the right tree is edited', () => {
+    const { app, container } = newApp()
+    buildSimple(app)
+    app.api.toggleSplit()
+    const badge = () => container.querySelector('.deviation-badge') as HTMLElement
+    expect(badge().style.display).toBe('none') // fresh flip: not deviated
+    expect(app.state.rightEdited).toBe(false)
+
+    app.api.setValue(rightLeaf(app, 'Sol'), 20)
+    expect(app.state.rightEdited).toBe(true)
+    expect(badge().style.display).toBe('')
+  })
+
+  it('VOC = |EV_left − EV_right| — same absolute value in either direction', () => {
+    const { app, container } = newApp()
+    buildSimple(app) // EV_left = 5
+    app.api.toggleSplit()
+    const voc = () => container.querySelector('.voc-bar')!.textContent!
+
+    // Right > left: Sol -> 16 gives EV_right = 8 -> VOC = |5 − 8| = 3.
+    app.api.setValue(rightLeaf(app, 'Sol'), 16)
+    expect(voc()).toContain('EV höger = 8')
+    expect(voc()).toContain('VOC = 3')
+
+    // Left > right: Sol -> 4 gives EV_right = 2 -> VOC = |5 − 2| = 3 (same abs).
+    app.api.setValue(rightLeaf(app, 'Sol'), 4)
+    expect(voc()).toContain('EV höger = 2')
+    expect(voc()).toContain('VOC = 3')
+  })
+
+  it('re-flip (Sammanfoga then Flip) regenerates the right tree from the left, overwriting edits', () => {
+    const { app } = newApp()
+    buildSimple(app)
+    app.api.toggleSplit()
+    app.api.setValue(rightLeaf(app, 'Sol'), 99)
+    expect(app.state.rightEdited).toBe(true)
+
+    app.api.toggleSplit() // Sammanfoga (leave split, keep tree)
+    app.api.toggleSplit() // Flip again -> regenerate from left
+
+    expect(app.state.rightEdited).toBe(false)
+    // The 99 edit is gone; Sol is back to the left-derived 10.
+    const sol = rightLeaf(app, 'Sol')
+    expect(sol.value).toBe(10)
+  })
+
+  it('undo steps back through left + right edits in exact chronological order', () => {
+    const { app } = newApp()
+    const root = buildSimple(app)
+    app.api.toggleSplit() // step: flip
+    app.api.setValue(rightLeaf(app, 'Sol'), 99) // step: right edit
+    app.api.setValue(root.outcomes[0], 50) // step: left edit (Sol payoff -> 50)
+
+    expect(root.outcomes[0].value).toBe(50)
+    expect(rightLeaf(app, 'Sol').value).toBe(99)
+
+    app.api.undo() // undo left edit
+    expect(app.state.root!.outcomes[0].value).toBe(10)
+    expect(rightLeaf(app, 'Sol').value).toBe(99) // right edit still there
+
+    app.api.undo() // undo right edit
+    expect(rightLeaf(app, 'Sol').value).toBe(10)
+
+    app.api.undo() // undo the flip -> back to single view
+    expect(app.state.split).toBe(false)
+  })
+})
+
+describe('pill sequence bar', () => {
+  const leftPills = (c: HTMLElement) =>
+    [...c.querySelectorAll('.left-pane .pill')].map((p) => p.textContent)
+  const rightPills = (c: HTMLElement) =>
+    [...c.querySelectorAll('.right-pane .pill')].map((p) => p.textContent)
+
+  // Bet(decision): Yes -> Weather(chance) Rain 0.3->8 / Sun 0.7->2 ; No -> 3.
+  function classic(app: ReturnType<typeof newApp>['app']) {
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    app.api.addOutcomeTo(root, 'No', NaN, 3)
+    const w = app.api.attachChild(root, yes, 'chance', 'Weather')
+    app.api.addOutcomeTo(w, 'Rain', 0.3, 8)
+    app.api.addOutcomeTo(w, 'Sun', 0.7, 2)
+    return { root, w }
+  }
+
+  it('left bar reflects the real node order (depth-first)', () => {
+    const { app, container } = newApp()
+    classic(app)
+    // Only child-bearing nodes are pills: Bet -> Weather (terminals aren't nodes).
+    expect(leftPills(container)).toEqual(['Bet', 'Weather'])
+    // Traversal arrows are shown between nodes.
+    expect(container.querySelector('.left-pane .pill-arrow')).not.toBeNull()
+  })
+
+  it('right bar reflects the flipped order, and the REAL order after a right edit', () => {
+    const { app, container } = newApp()
+    classic(app)
+    app.api.toggleSplit()
+    // Flipped clairvoyance order: Weather (chance) first, then Bet duplicated
+    // under each Weather outcome (the real reversed structure).
+    expect(rightPills(container)).toEqual(['Weather', 'Bet', 'Bet'])
+
+    // Hand-edit the right tree: attach a node under one of Bet's terminals so the
+    // right bar's order genuinely diverges from a naive expectation.
+    const betNode = allNodesIn(app.state.rightRoot!).find((n) => n.label === 'Bet')!
+    const term = betNode.outcomes.find((o) => !o.child)!
+    app.api.attachChild(betNode, term, 'chance', 'Extra')
+    // The bar shows reality: the new node appears in the sequence.
+    expect(rightPills(container)).toContain('Extra')
+  })
+
+  it('drag-reorder swaps two sibling nodes and updates the tree', () => {
+    const { app, container } = newApp()
+    // Root DECISION P with two children a -> A, b -> B. (A decision parent, so
+    // no auto-mirroring interferes with two independent child nodes.)
+    const p = app.api.createRoot('decision', 'P')
+    const ea = app.api.addOutcomeTo(p, 'a')
+    const eb = app.api.addOutcomeTo(p, 'b')
+    app.api.attachChild(p, ea, 'chance', 'A')
+    app.api.attachChild(p, eb, 'chance', 'B')
+    expect(leftPills(container)).toEqual(['P', 'A', 'B'])
+
+    // Simulate dragging A's pill onto B's pill (siblings under P).
+    const pills = [...container.querySelectorAll('.left-pane .pill')] as HTMLElement[]
+    const pillA = pills.find((x) => x.textContent === 'A')!
+    const pillB = pills.find((x) => x.textContent === 'B')!
+    pillA.dispatchEvent(new Event('dragstart', { bubbles: true }))
+    pillB.dispatchEvent(new Event('drop', { bubbles: true }))
+
+    // Tree outcome order updated: b now precedes a.
+    expect(app.state.root!.outcomes.map((o) => o.label)).toEqual(['b', 'a'])
+    expect(leftPills(container)).toEqual(['P', 'B', 'A'])
+  })
+
+  it('reorder syncs outcome order across a linked variable group', () => {
+    const { app } = newApp()
+    const namen = app.api.createRoot('chance', 'namen')
+    const e1 = app.api.addOutcomeTo(namen, '1', 1 / 3)
+    app.api.addOutcomeTo(namen, '2', 1 / 3)
+    app.api.addOutcomeTo(namen, '3', 1 / 3)
+    const okej = app.api.attachChild(namen, e1, 'chance', 'okejdå') // 3 linked instances
+    app.api.addOutcomeTo(okej, 'jag', 0.5)
+    app.api.addOutcomeTo(okej, 'du', 0.5)
+    expect(okej.outcomes.map((o) => o.label)).toEqual(['jag', 'du'])
+
+    app.api.reorderOutcome(okej, 0, 1) // jag/du -> du/jag
+
+    // Every linked instance follows the same new order (user-chosen sync).
+    for (const inst of collectGroup(app.state.root!, okej.variableId)) {
+      expect(inst.outcomes.map((o) => o.label)).toEqual(['du', 'jag'])
+    }
+  })
+
+  it('pill click opens the edit menu WITHOUT Koppla loss / Villkorstabell', () => {
+    const { app, container } = newApp()
+    const namen = app.api.createRoot('chance', 'namen')
+    const e1 = app.api.addOutcomeTo(namen, '1', 1 / 3)
+    app.api.addOutcomeTo(namen, '2', 1 / 3)
+    app.api.addOutcomeTo(namen, '3', 1 / 3)
+    app.api.attachChild(namen, e1, 'chance', 'okejdå') // linked group (would show Koppla loss)
+
+    // Click the linked child's pill.
+    const pill = [...container.querySelectorAll('.left-pane .pill')].find(
+      (p) => p.textContent === 'okejdå',
+    )!
+    pill.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    const items = [...container.querySelectorAll('.menu-item')].map((b) => b.textContent)
+    // The normal edit entries are present...
+    expect(items.some((t) => t?.includes('Redigera utfall'))).toBe(true)
+    expect(items.some((t) => t?.includes('Byt namn'))).toBe(true)
+    expect(items.some((t) => t?.includes('Ta bort'))).toBe(true)
+    // ...but the two tree-only operations are hidden from a pill click.
+    expect(items.some((t) => t?.includes('Villkorstabell'))).toBe(false)
+    expect(items.some((t) => t?.includes('Koppla loss'))).toBe(false)
+  })
+})

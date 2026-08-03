@@ -4,6 +4,31 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-03 (segment 21) — Flip/VOC-omarbetning: redigerbart höger träd, VOC = |diff|, pill-sekvensbar
+
+Fyra relaterade ändringar i flip/VOC-systemet (större segment).
+
+**Punkt 1 — nodform/typ-ordning (ingen bugg funnen).** Grundlig granskning + reproduktion: `nodeShape`/`layout`/`expectedValue`/`expectedUtility`/`bayesReversal` läser alla `node.nodeType` konsekvent; flip grupperar chans-före-beslut oberoende av position. En **chansnod som rot** ger korrekt VOC — chansrot→beslut→chans → VOC=2, och chansrot→beslut (chans redan före alla beslut) → VOC=0 vilket är *matematiskt korrekt* (klarsyn om en redan-observerad variabel är värdelös), inte en bugg. Hypotesen om positionsbaserad typläsning stämde alltså inte. Låst med regressionstester (`bayesReversal.test.ts`, "chance-node root").
+
+**Punkt 2–4 — höger träd redigerbart + oberoende + persisterat, VOC omdefinierad.**
+- **Redigerbart & oberoende:** `state.rightRoot` är egen state; `renderRightPane` ritar den utan att re-flippa varje render. Höger får samma redigeringshandlare som vänster. `rootOf(node)`/`touchTree(node)`/`touchTreeByEdge(edge)` dirigerar varje mutation till rätt träd och flaggar höger-avvikelse (`rightEdited`). Vänster-redigeringar rör inte höger längre.
+- **Vänster alltid källan:** Flip (in i split) regenererar höger färskt från vänster (`regenerateRight`), skriver över tidigare höger-redigeringar; Sammanfoga lämnar split men behåller höger. Ladda återställer båda exakt (regenererar inte).
+- **VOC = `|EV_vänster − EV_höger|`** (EU: `|CE_vänster − CE_höger|`), riktningsagnostisk. Färsk flip = klassisk VOC. `ensureVocInvariant` körs kvar vid generering som självkontroll.
+- **Avvikelse-indikator:** badge "✎ redigerad sedan Sammanfoga" + caption "fri jämförelse" när `rightEdited`.
+- **Dubbelträds-persistens (kritisk, löst):** `document.ts` sparar `right_tree`/`right_edited`/`split`, version **2**; v1 laddas fortfarande; `idCounter` höjs över båda träden. Round-trip-testat att höger-redigeringar överlever Spara→Ladda (annars tyst dataförlust).
+- **Undo/redo:** delad global tidslinje — snapshot omfattar båda träden; testat kronologiskt (vänster-edit → flip → höger-edit → stega tillbaka i ordning).
+
+**Punkt 5 — pill-sekvensbar per panel.** Vänster + höger får varsin pill-bar överst i canvas-ytan: djup-först pills (en per nod, `→`-pilar), härledd ur trädets verkliga struktur (ett avvikande höger träd visar sin verkliga ordning). Drag-och-släpp reordar **bara syskon under samma förälder** (`reorderOutcomeInGroup`) och **synkar ordningen över den länkade gruppen** (användarens val — konsekvent med övrig gruppsynk; ordning påverkar inte flip/VOC som matchar på etikett). Pill-klick öppnar samma meny som nodklick men **utan** Villkorstabell/Koppla loss (`fromPill`-flagga). Ersätter backlog-punkten "node-omflyttning".
+
+**Judgment calls:**
+1. **Flip-knappens tillståndsmaskin (tvetydig i speccen):** valde att *Flip* (in i split) alltid regenererar höger från vänster och *Sammanfoga* lämnar split men behåller höger träd. Regenerering (som skriver över höger-redigeringar) sker alltså vid varje ny Flip; persistens (save/load, och split av→på behåller trädet tills nästa Flip) gör att redigeringar inte tappas oavsiktligt. Detta uppfyller "vänster alltid källa" + "höger-redigeringar överlever" samtidigt.
+2. **Länkad drag-ordning:** frågade användaren (den flaggade tvetydigheten) → **synka ordning över gruppen**.
+3. **Pills per nod, inte per nivå:** "reorder siblings under same parent" kräver per-nod-pills; flippade trädet visar därför t.ex. `Weather → Bet → Bet` (Bet duplicerat per gren = verklig struktur).
+
+**Testresultat:** 251 gröna (var 240; +11: chansrot-VOC-regression ×2, höger-redigerbar+round-trip, avvikelse-indikator, VOC båda riktningar, regenerering skriver över, undo kronologiskt, pill-ordning vänster/höger, pill-drag-reorder, grupp-ordningssynk, pill-klick-meny). Medvetet omskrivna: tester som antog skrivskyddat höger/live-re-flip och gammal VOC-text. `tsc` + build rena. **Live-verifierat** (JS-driven DOM): vänster pills `[Bet, Weather]`, flip → höger pills `[Weather, Bet, Bet]`, VOC "EV vänster 3.8 · EV höger 4.5 · VOC 0.7"; höger-payoff-edit → badge synlig + caption "fri jämförelse" + VOC uppdaterad till |diff|; höger pill-klick-meny utan Villkorstabell/Koppla loss. Inga konsolfel.
+
+---
+
 ## 2026-08-02 (segment 20) — Länkade instanser: synlighet + "fråga vid avvikelse" + primär-unlink-bugg
 
 **Bakgrund:** Användaren upplevde att **villkorstabeller och "Koppla loss" inte kändes som att de fungerade**. Live-reproduktion på den deployade sidan (JS-driven DOM, browser-panelen komponerar inte skärmdumpar) visade att alla tre mekanismerna (sannolikhetssynk, villkorstabell-opt-out, koppla loss) fungerade *mekaniskt* — men tillståndet var **osynligt och odiscoverbart**, plus **en äkta latent bugg** i unlink av primär-instansen. Uppdraget var att förklara + åtgärda.

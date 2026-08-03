@@ -309,4 +309,59 @@ describe('reverseTreeWithBayes — edge cases and invariants', () => {
     expect(ensureVocInvariant(0.3)).toBeCloseTo(0.3)
     expect(Number.isNaN(ensureVocInvariant(NaN))).toBe(true)
   })
+
+  // Regression (part 1): node type/VOC must read node.nodeType, never assume a
+  // position (e.g. "root is a decision"). A tree with a CHANCE node as root and
+  // a decision *below* a later chance must still produce the correct nonzero VOC
+  // — clairvoyance about the deeper chance variable moves it ahead of the
+  // decision even though the root chance is already first.
+  describe('chance-node root (no position-based type assumption)', () => {
+    it('chance root -> decision -> chance yields the correct nonzero VOC', () => {
+      // C1(chance): a 0.5 / b 0.5
+      //   under each: Bet(decision): Go -> Payoff(chance): win 0.5 -> 10 / lose 0.5 -> 0
+      //                              Stay -> 4
+      const root = new TreeNode('c1', 'chance', 'C1')
+      const ea = addOutcome(root, 'a', 0.5)
+      const eb = addOutcome(root, 'b', 0.5)
+      const branch = (tag: string) => {
+        const d = new TreeNode('bet' + tag, 'decision', 'Bet')
+        const go = addOutcome(d, 'Go')
+        addOutcome(d, 'Stay', NaN, 4)
+        const c2 = new TreeNode('pay' + tag, 'chance', 'Payoff')
+        addOutcome(c2, 'win', 0.5, 10)
+        addOutcome(c2, 'lose', 0.5, 0)
+        setChild(d, go, c2)
+        return d
+      }
+      setChild(root, ea, branch('a'))
+      setChild(root, eb, branch('b'))
+
+      const r = flip(root)
+      // Original: each branch max(EV(Payoff)=5, Stay=4) = 5 -> 0.5·5 + 0.5·5 = 5.
+      expect(r.originalEv).toBeCloseTo(5)
+      // Clairvoyance: know Payoff before Bet: win->max(10,4)=10, lose->max(0,4)=4
+      //   -> 0.5·10 + 0.5·4 = 7. C1 already known. VOC = 2 (NOT 0).
+      expect(r.flippedEv).toBeCloseTo(7)
+      expect(r.voc).toBeCloseTo(2)
+      // The flipped root is a chance node (Payoff moves first), read from type.
+      expect(r.flipped.nodeType).toBe('chance')
+    })
+
+    it('chance root already ahead of every decision correctly gives VOC 0', () => {
+      // Weather(chance) -> Bet(decision): the chance is already observed before
+      // deciding, so clairvoyance adds nothing. VOC 0 here is CORRECT, not a bug.
+      const root = new TreeNode('w', 'chance', 'Weather')
+      const sun = addOutcome(root, 'Sun', 0.5)
+      const rain = addOutcome(root, 'Rain', 0.5)
+      const bet = (tag: string, go: number) => {
+        const d = new TreeNode('bet' + tag, 'decision', 'Bet')
+        addOutcome(d, 'Yes', NaN, go)
+        addOutcome(d, 'No', NaN, 5)
+        return d
+      }
+      setChild(root, sun, bet('a', 10))
+      setChild(root, rain, bet('b', 0))
+      expect(flip(root).voc).toBeCloseTo(0)
+    })
+  })
 })
