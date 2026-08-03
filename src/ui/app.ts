@@ -1712,11 +1712,20 @@ export function createApp(
       return
     }
     guarded(() => {
-      const name = documentFilename(state.root).replace(/\.json$/, '.png')
-      const started = exportTreePng(treeSvg, name)
+      const base = documentFilename(state.root).replace(/\.json$/, '')
+      const exported: string[] = []
+      // Left (main) tree.
+      const leftName = `${base}.png`
+      if (exportTreePng(treeSvg, leftName)) exported.push(leftName)
+      // In split mode, the right (reversed) tree is its OWN PNG file.
+      const rightSvg = rightHost.querySelector('svg') as SVGSVGElement | null
+      if (state.split && state.rightRoot && rightSvg) {
+        const rightName = `${base}-omvant.png`
+        if (exportTreePng(rightSvg, rightName)) exported.push(rightName)
+      }
       setMessage(
-        started
-          ? `Exporterade ${name} (PNG, transparent bakgrund).`
+        exported.length > 0
+          ? `Exporterade ${exported.join(' + ')} (PNG, transparent bakgrund).`
           : 'Kunde inte exportera — trädet är tomt.',
       )
     })
