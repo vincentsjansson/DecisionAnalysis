@@ -4,6 +4,26 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-04 (segment 23) — Pill-drag omdefinierad: NIVÅ-omordning istället för syskon-utfall
+
+**Vad hände:** Användaren klargjorde att pill-draget (byggt i segment 21 som syskon-utfalls-omordning) skulle fungera "på det andra sättet": dra för att byta plats på **nivåerna** i trädet (`a→b→c` blir `b→a→c`), inte byta syskon-utfall. Två frågor besvarade av användaren: (1) det ska omstrukturera det **faktiska trädet på plats** (i den panel pill-baren tillhör), inte bara en vy; (2) **bara byta med grannen** (en transposition per drag). Regeln: man kan inte byta ordning förbi en **bortkoppling** eller en **villkorstabell**, och man byter inte plats på `a`/`a'` (länkade instanser är samma nivå).
+
+**Nyckelinsikt:** en nivå-swap är exakt samma bygg-operation som flip, bara med en annan `order`-array. Refaktorerade `bayesReversal.ts`: extraherade `collectCanonical` (validering + canonical-sekvens, oförändrad logik) och `buildFromOrder(c, order, nid, preserveGroups)` (bygget, ordnings-agnostiskt). `reverseTreeWithBayes` = collect + reverserad order + build (`preserveGroups=false`, singletons som förr). Ny export `reorderAdjacentLevels(root, upperDepth, nid)` = collect + swap:ad order + build (`preserveGroups=true` — länkade grupper bevaras via återanvänt `variableId`, så in-place-omordningen inte tappar länkning). Flip-beteendet **byte-identiskt** (57 model-tester oförändrat gröna direkt efter refaktorn).
+
+**Blockering (fail-loud):** `reorderAdjacentLevels` kastar `FlipError` om (a) trädet inte är nivå-konsekvent — vilket en frikopplad instans triggar, eftersom den bryter nivåns enda-variabel-identitet (= "kan inte ordna om förbi en bortkoppling"), (b) någon nod har en villkorstabell (bygget skulle annars tyst platta den, och tabellen låser nodens kontext), eller (c) `upperDepth` är utanför intervallet.
+
+**UI (`app.ts`):** `renderPillBar` omskriven till **en pill per nivå** (`levelSequence` — går trädet djup-vis, en `LevelInfo` per depth med `uniform`/`hasTable`-flaggor). Drag på intilliggande pill i samma panel → `guarded(api.reorderLevels(root, min(depth)))`. `api.reorderLevels` bygger om trädet via `reorderAdjacentLevels`, ersätter `state.root`/`state.rightRoot` på plats (höger sätter `rightEdited`), nollställer vald nod (nya id:n). Låsta nivåer (tabell / icke-uniform) får `.locked` (streckad, dämpad) + tooltip. Pill-klick oförändrat (nivåns primär-instans, `fromPill` döljer Villkorstabell/Koppla loss). **Borttaget:** `reorderOutcomeInGroup` (variable.ts) + `api.reorderOutcome` — syntes-utfalls-omordningen hade ingen annan ingång och ersätts helt av nivå-omordning (ingen död kod kvar).
+
+**Testresultat:** 252 gröna (+1 netto; pill-testerna omskrivna till nivå-semantik: en-pill-per-nivå, länkad grupp = en pill, grann-swap byter nivåer i trädet, villkorstabell låser + blockerar, icke-granne gör inget). `tsc` + build rena. **Live-verifierat** (JS-driven DOM): byggde A(chans x/y)→B(beslut m/n, länkad), pill-bar `[A, B]`, drog A på B → `[B, A]`, roten blev B med A/A' som bevarad länkad grupp under; en tom B blockerades korrekt ("noden B har inga utfall"). Inga konsolfel.
+
+**Judgment calls:**
+1. **Återanvände flip-bygget** istället för en separat lokal transpose-funktion — en adjacent nivå-swap ÄR samma sak som flip fast med en annan ordning, så `buildFromOrder` delas. Minsta möjliga nya yta, och asymmetri/dupliceringsregeln hanteras redan korrekt.
+2. **`preserveGroups`-flagga** så flip fortsatt producerar singletons (byte-identiskt, inga flip-tester rörda) medan in-place-omordning bevarar länkade grupper.
+3. **Villkorstabell = global block** (v1): om trädet har NÅGON villkorstabell blockeras omordning helt, inte bara swappar som "korsar" den. Enklare och matchar "kan inte ordna om förbi villkorstabeller"; partiella väggar (tillåt swappar på den rena sidan) är en möjlig framtida förfining.
+4. **Bortkoppling hanteras via nivå-konsekvens-checken** snarare än en separat regel — en frikopplad instans ger nivån blandade `variableId` → `collectCanonical` kastar → omordning blockeras. Faller ut naturligt.
+
+---
+
 ## 2026-08-04 (segment 22) — Bayes-omvändning omdefinierad: full sekvensvändning
 
 **Vad hände:** Efter segment 21 (VOC=|diff|, redigerbart höger träd) klargjorde användaren via flera korrigerande meddelanden att själva omvändnings**algoritmen** — inte bara VOC-visningen — skulle ändras. Ursprunglig hypotes (min missuppfattning): omvändningen skulle bara agera villkorligt ("bara om beslut→chans, annars rör vi inget"). Användarens rättning: **ingen villkorssats alls** — omvändningen ska **alltid** vända hela nodsekvensen rakt av, oavsett typ (`a→b→c` blir `c→b→a` även med blandade besluts-/chansnoder), och den flyttade noden behåller sina **egna** utfall + sannolikheter oförändrade (ingen Bayesiansk omräkning).

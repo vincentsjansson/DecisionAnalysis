@@ -1448,72 +1448,100 @@ describe('pill sequence bar', () => {
     return { root, w }
   }
 
-  it('left bar reflects the real node order (depth-first)', () => {
+  it('left bar shows ONE pill per level (the variable sequence) with arrows', () => {
     const { app, container } = newApp()
     classic(app)
-    // Only child-bearing nodes are pills: Bet -> Weather (terminals aren't nodes).
+    // One pill per depth-level: Bet (decision) -> Weather (chance).
     expect(leftPills(container)).toEqual(['Bet', 'Weather'])
-    // Traversal arrows are shown between nodes.
     expect(container.querySelector('.left-pane .pill-arrow')).not.toBeNull()
   })
 
-  it('right bar reflects the flipped order, and the REAL order after a right edit', () => {
+  it('a linked group is ONE level pill (no a/a\' pills), and the right bar shows its real sequence', () => {
     const { app, container } = newApp()
     classic(app)
     app.api.toggleSplit()
-    // Flipped clairvoyance order: Weather (chance) first, then Bet duplicated
-    // under each Weather outcome (the real reversed structure).
-    expect(rightPills(container)).toEqual(['Weather', 'Bet', 'Bet'])
+    // Flipped: Weather (depth 0) then Bet (depth 1). Bet is duplicated per
+    // Weather outcome, but it is ONE LEVEL -> one pill, not one-per-instance.
+    expect(rightPills(container)).toEqual(['Weather', 'Bet'])
 
-    // Hand-edit the right tree: attach a node under one of Bet's terminals so the
-    // right bar's order genuinely diverges from a naive expectation.
+    // Hand-edit the right tree: attach a node under one of Bet's terminals ->
+    // a new level appears, and the bar reflects that real (edited) sequence.
     const betNode = allNodesIn(app.state.rightRoot!).find((n) => n.label === 'Bet')!
     const term = betNode.outcomes.find((o) => !o.child)!
     app.api.attachChild(betNode, term, 'chance', 'Extra')
-    // The bar shows reality: the new node appears in the sequence.
-    expect(rightPills(container)).toContain('Extra')
+    expect(rightPills(container)).toEqual(['Weather', 'Bet', 'Extra'])
   })
 
-  it('drag-reorder swaps two sibling nodes and updates the tree', () => {
+  it('dragging a pill onto its neighbour swaps the two LEVELS in place', () => {
     const { app, container } = newApp()
-    // Root DECISION P with two children a -> A, b -> B. (A decision parent, so
-    // no auto-mirroring interferes with two independent child nodes.)
-    const p = app.api.createRoot('decision', 'P')
-    const ea = app.api.addOutcomeTo(p, 'a')
-    const eb = app.api.addOutcomeTo(p, 'b')
-    app.api.attachChild(p, ea, 'chance', 'A')
-    app.api.attachChild(p, eb, 'chance', 'B')
-    expect(leftPills(container)).toEqual(['P', 'A', 'B'])
+    // A (chance) x/y -> B (decision) under each (auto-mirrored, linked group).
+    const a = app.api.createRoot('chance', 'A')
+    const ex = app.api.addOutcomeTo(a, 'x', 0.5)
+    app.api.addOutcomeTo(a, 'y', 0.5)
+    const b = app.api.attachChild(a, ex, 'decision', 'B') // mirrors B' under y
+    app.api.addOutcomeTo(b, 'm', NaN, 1)
+    app.api.addOutcomeTo(b, 'n', NaN, 2)
+    expect(leftPills(container)).toEqual(['A', 'B'])
+    expect(app.state.root!.label).toBe('A')
 
-    // Simulate dragging A's pill onto B's pill (siblings under P).
+    // Drag A (level 0) onto B (level 1): swap the two levels.
     const pills = [...container.querySelectorAll('.left-pane .pill')] as HTMLElement[]
     const pillA = pills.find((x) => x.textContent === 'A')!
     const pillB = pills.find((x) => x.textContent === 'B')!
     pillA.dispatchEvent(new Event('dragstart', { bubbles: true }))
     pillB.dispatchEvent(new Event('drop', { bubbles: true }))
 
-    // Tree outcome order updated: b now precedes a.
-    expect(app.state.root!.outcomes.map((o) => o.label)).toEqual(['b', 'a'])
-    expect(leftPills(container)).toEqual(['P', 'B', 'A'])
+    // The tree is restructured in place: B is now the root, A below it.
+    expect(app.state.root!.label).toBe('B')
+    expect(app.state.root!.nodeType).toBe('decision')
+    expect(leftPills(container)).toEqual(['B', 'A'])
   })
 
-  it('reorder syncs outcome order across a linked variable group', () => {
-    const { app } = newApp()
-    const namen = app.api.createRoot('chance', 'namen')
-    const e1 = app.api.addOutcomeTo(namen, '1', 1 / 3)
-    app.api.addOutcomeTo(namen, '2', 1 / 3)
-    app.api.addOutcomeTo(namen, '3', 1 / 3)
-    const okej = app.api.attachChild(namen, e1, 'chance', 'okejdå') // 3 linked instances
-    app.api.addOutcomeTo(okej, 'jag', 0.5)
-    app.api.addOutcomeTo(okej, 'du', 0.5)
-    expect(okej.outcomes.map((o) => o.label)).toEqual(['jag', 'du'])
+  it('a conditional table locks the level and blocks reordering (fail loud, tree unchanged)', () => {
+    const { app, container } = newApp()
+    // A (chance) x/y -> B (chance) under x with a conditional table on B.
+    const a = app.api.createRoot('chance', 'A')
+    const ex = app.api.addOutcomeTo(a, 'x', 0.5)
+    app.api.addOutcomeTo(a, 'y', 0.5)
+    const b = app.api.attachChild(a, ex, 'chance', 'B')
+    app.api.addOutcomeTo(b, 'p', 0.5, 1)
+    app.api.addOutcomeTo(b, 'q', 0.5, 2)
+    app.api.setConditionalTable(b, [
+      { condition: new Set([`${a.id}:x`]), probabilities: { p: 0.9, q: 0.1 } },
+    ])
 
-    app.api.reorderOutcome(okej, 0, 1) // jag/du -> du/jag
+    const before = app.state.root
+    // Attempt to swap the two levels via a drag.
+    const pills = [...container.querySelectorAll('.left-pane .pill')] as HTMLElement[]
+    pills[0].dispatchEvent(new Event('dragstart', { bubbles: true }))
+    pills[1].dispatchEvent(new Event('drop', { bubbles: true }))
 
-    // Every linked instance follows the same new order (user-chosen sync).
-    for (const inst of collectGroup(app.state.root!, okej.variableId)) {
-      expect(inst.outcomes.map((o) => o.label)).toEqual(['du', 'jag'])
-    }
+    // Blocked: tree object unchanged, a message explains why.
+    expect(app.state.root).toBe(before)
+    expect(app.state.message).toContain('villkorstabell')
+    // The table-bearing level is marked locked in the bar.
+    expect(container.querySelector('.left-pane .pill.locked')).not.toBeNull()
+  })
+
+  it('a non-adjacent drop does nothing (adjacent-only)', () => {
+    const { app, container } = newApp()
+    // A -> B -> C, three clean levels.
+    const a = app.api.createRoot('decision', 'A')
+    const ex = app.api.addOutcomeTo(a, 'x')
+    app.api.addOutcomeTo(a, 'y', NaN, 0)
+    const b = app.api.attachChild(a, ex, 'decision', 'B')
+    const em = app.api.addOutcomeTo(b, 'm')
+    app.api.addOutcomeTo(b, 'nn', NaN, 0)
+    app.api.attachChild(b, em, 'chance', 'C')
+    expect(leftPills(container)).toEqual(['A', 'B', 'C'])
+
+    const before = app.state.root
+    const pills = [...container.querySelectorAll('.left-pane .pill')] as HTMLElement[]
+    // Drag A (level 0) onto C (level 2) — not adjacent.
+    pills[0].dispatchEvent(new Event('dragstart', { bubbles: true }))
+    pills[2].dispatchEvent(new Event('drop', { bubbles: true }))
+    expect(app.state.root).toBe(before) // unchanged
+    expect(leftPills(container)).toEqual(['A', 'B', 'C'])
   })
 
   it('pill click opens the edit menu WITHOUT Koppla loss / Villkorstabell', () => {

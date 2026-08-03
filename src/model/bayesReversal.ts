@@ -27,7 +27,7 @@ export interface FlipResult {
  * In a true tree the same variable appears as separate node objects on
  * different branches; linked instances share a `variableId`, which is what
  * ties them together — not a coincidental label match. `displayLabel` (the
- * base name) is kept for user-facing messages and the flipped node's name. */
+ * base name) is kept for user-facing messages and the built node's name. */
 interface CanonicalVar {
   variableId: string
   displayLabel: string
@@ -39,6 +39,16 @@ interface PathInfo {
   /** variableId -> outcome label taken, for every variable on the path */
   assignment: Map<string, string>
   varsIncluded: Set<string>
+}
+
+/** Result of the collect phase: the validated canonical variable sequence plus
+ * everything the build phase needs (paths for the duplication rule, per-variable
+ * distributions, and the original root for payoff evaluation). */
+interface Collected {
+  root: TreeNodeType
+  canonical: CanonicalVar[]
+  paths: PathInfo[]
+  distGroups: Map<string, Map<string, number>>
 }
 
 const DIST_EPSILON = 1e-9
@@ -77,50 +87,24 @@ export function ensureVocInvariant(voc: number): number {
   return Math.max(0, voc)
 }
 
-/** Full sequence reversal (segment 22, 2026-08-03/04 — replaces the earlier
- * classical-clairvoyance chance-before-decision reversal).
- *
- * The flipped tree reverses the ENTIRE node sequence along every path,
- * regardless of node type: a→b→c becomes c→b→a. This is a purely structural/
- * positional mirror, not a Bayesian posterior computation — each moved node
- * keeps its OWN outcome set and the probabilities already attached to those
- * outcomes, copied unchanged from the original tree. There is no "value of
- * clairvoyance" semantics anymore (a decision node can end up earlier than
- * information it originally depended on), so EV is not guaranteed to increase
- * — VOC is displayed by the app as the direction-agnostic |EV_left − EV_right|.
- *
- * Early termination (the textbook duplication rule) still works exactly as
- * before: `canonical` establishes one variable per depth from the longest
- * paths, shorter paths simply don't include later variables, and `build`
- * skips a variable when no path compatible with the current assignment
- * includes it — this logic doesn't care what order `order` visits variables
- * in, so it is unchanged by the switch to full reversal.
- *
- * The one thing full reversal cannot support: a chance node whose probability
- * genuinely depends on context (a conditional table that varies by branch).
- * In the old algorithm this was fine because the deciding ancestor was always
- * placed earlier (chance-before-decision). Under a full reversal an ancestor
- * can end up LATER than the node it would have determined — at the point the
- * node is built there is no way to know which of its context-dependent
- * distributions applies — so this fails loud with `FlipError` rather than
- * guessing. A chance node with a single, context-independent distribution
- * (the common case, and the only one linked-group probability sync produces)
- * is unaffected. */
-export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
+/** Collect + validate the canonical variable sequence. Every root-to-terminal
+ * path must pass the same variables in the same order (early termination is
+ * allowed — the duplication rule). Chance nodes must sum to 1 and must have a
+ * single context-independent distribution (a conditional table that differs by
+ * branch is rejected: under a reordering an ancestor can end up after the node
+ * it would determine, so there is no way to know which distribution applies).
+ * Throws `FlipError` with a specific message on any violation. */
+function collectCanonical(root: TreeNodeType): Collected {
   if (root.outcomes.length === 0) {
     throw new FlipError('Kan inte vända: trädet har inga utfall än.')
   }
 
-  // ── Collect: canonical variable sequence, each chance variable's own
-  //    (context-independent) distribution, and every path's variable
-  //    assignment. Variables are identified by variableId (linked instances
-  //    share one), not by a coincidental label match. ──
   const canonical: CanonicalVar[] = []
   const paths: PathInfo[] = []
-  // Keyed by variableId only (NOT by preceding context): a full reversal can
-  // place a node's determining ancestor after it, so the node's distribution
-  // must be the same everywhere it occurs — see the FlipError below.
-  const distGroups = new Map<string, { dist: Map<string, number>; desc: string }>()
+  // Keyed by variableId only: a reordering can place a node's determining
+  // ancestor after it, so the node's distribution must be the same everywhere.
+  const distGroups = new Map<string, Map<string, number>>()
+  const distDesc = new Map<string, string>()
   const varName = new Map<string, string>() // variableId -> display name, for messages
 
   const visit = (
@@ -187,12 +171,12 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
       const prev = distGroups.get(node.variableId)
       if (prev) {
         for (const [label, p] of dist) {
-          const q = prev.dist.get(label)!
+          const q = prev.get(label)!
           const equal = (Number.isNaN(p) && Number.isNaN(q)) || Math.abs(p - q) <= DIST_EPSILON
           if (!equal) {
             throw new FlipError(
               `Kan inte vända: "${displayName(node)}" har olika sannolikheter beroende på kontext — ` +
-                `via ${prev.desc}: ${fmtDist(prev.dist)}, men via ${where}: ${fmtDist(dist)}. ` +
+                `via ${distDesc.get(node.variableId)}: ${fmtDist(prev)}, men via ${where}: ${fmtDist(dist)}. ` +
                 `En fullständig sekvensvändning kräver att varje nod har SAMMA sannolikheter ` +
                 `överallt, eftersom förfadern som villkoret beror på kan hamna efter noden i den ` +
                 `vända ordningen — ta bort villkorstabellen eller gör sannolikheterna kontextoberoende.`,
@@ -200,7 +184,8 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
           }
         }
       } else {
-        distGroups.set(node.variableId, { dist, desc: where })
+        distGroups.set(node.variableId, dist)
+        distDesc.set(node.variableId, where)
       }
     }
 
@@ -221,13 +206,26 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
   }
   visit(root, 0, new Set(), new Map())
 
-  // ── Build the flipped tree: the ENTIRE canonical sequence reversed,
-  //    regardless of node type (full sequence reversal, not chance-first). ──
-  const order = canonical.map((v, i) => ({ v, i })).reverse()
+  return { root, canonical, paths, distGroups }
+}
 
-  let idCounter = 0
-  const nid = (): string => `flip_${++idCounter}`
-
+/** Builds a fresh tree whose levels follow `order` (a permutation of the
+ * canonical variable sequence). Shared by the flip (order = reversed) and manual
+ * pill-drag level reordering (order = one adjacent pair swapped). A moved node
+ * keeps its own outcomes and their probabilities unchanged — no recomputation.
+ * Asymmetry / early termination is handled by the duplication rule via
+ * `anyCompatiblePathIncludes`, so this works for ANY order.
+ *
+ * `preserveGroups`: when true, built nodes reuse the source variable's
+ * `variableId` (so linked instances stay linked in the result — needed for an
+ * in-place reorder of the real tree). When false, each built node is its own
+ * singleton (the flip produces an independent derived tree). */
+function buildFromOrder(
+  c: Collected,
+  order: CanonicalVar[],
+  nid: () => string,
+  preserveGroups: boolean,
+): TreeNodeType {
   const compatible = (path: PathInfo, assign: Map<string, string>): boolean => {
     for (const [key, value] of assign) {
       const pathValue = path.assignment.get(key)
@@ -236,22 +234,18 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
     return true
   }
 
-  /** The duplication rule's flip side: a variable is only materialized in a
-   * branch of the flipped tree if some original path compatible with the
-   * branch actually passes it — otherwise every payoff in the branch is
-   * independent of the variable and the level is skipped, mirroring the
-   * original tree's early termination. Order-agnostic: works identically for
-   * full reversal as it did for chance-first ordering. */
+  /** A variable is materialized in a branch only if some original path
+   * compatible with the branch actually passes it — otherwise every payoff in
+   * the branch is independent of the variable and the level is skipped
+   * (mirroring the original tree's early termination). Order-agnostic. */
   const anyCompatiblePathIncludes = (assign: Map<string, string>, variableId: string): boolean =>
-    paths.some((p) => p.varsIncluded.has(variableId) && compatible(p, assign))
+    c.paths.some((p) => p.varsIncluded.has(variableId) && compatible(p, assign))
 
   /** Evaluates the original tree as a payoff function of a full variable
-   * assignment (keyed by variableId). Early-terminating original paths simply
-   * ignore the assigned values of the variables they skip — the textbook
-   * duplication rule. Order-agnostic: walks the ORIGINAL tree, independent of
-   * what order the flipped tree was built in. */
+   * assignment (keyed by variableId). Early-terminating paths ignore variables
+   * they skip — the duplication rule. Order-agnostic (walks the original tree). */
   const evaluate = (assign: Map<string, string>): number => {
-    let node = root
+    let node = c.root
     for (;;) {
       const outLabel = assign.get(node.variableId)!
       const edge = node.outcomes.find((o) => o.label === outLabel)!
@@ -260,17 +254,30 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
     }
   }
 
+  // Per-variable instance counter, so preserved groups get contiguous
+  // instanceIndex values (0 = primary) for correct prime-mark display.
+  const instCount = new Map<string, number>()
+  const makeNode = (v: CanonicalVar): TreeNodeType => {
+    const node = new TreeNode(nid(), v.nodeType, v.displayLabel)
+    if (preserveGroups) {
+      node.variableId = v.variableId
+      node.instanceIndex = instCount.get(v.variableId) ?? 0
+      instCount.set(v.variableId, node.instanceIndex + 1)
+    }
+    return node
+  }
+
   type Built = { kind: 'terminal'; value: number } | { kind: 'node'; node: TreeNodeType }
 
   const build = (assign: Map<string, string>, k: number): Built => {
-    while (k < order.length && !anyCompatiblePathIncludes(assign, order[k].v.variableId)) k++
+    while (k < order.length && !anyCompatiblePathIncludes(assign, order[k].variableId)) k++
     if (k === order.length) return { kind: 'terminal', value: evaluate(assign) }
 
-    const { v } = order[k]
-    const node = new TreeNode(nid(), v.nodeType, v.displayLabel)
+    const v = order[k]
+    const node = makeNode(v)
     // Each chance node keeps its own (context-independent) distribution —
     // copied unchanged, never recomputed for the new position.
-    const dist = v.nodeType === 'chance' ? distGroups.get(v.variableId)?.dist : undefined
+    const dist = v.nodeType === 'chance' ? c.distGroups.get(v.variableId) : undefined
 
     for (const outLabel of v.outcomeLabels) {
       const probability = dist ? (dist.get(outLabel) ?? NaN) : NaN
@@ -289,10 +296,22 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
   if (built.kind === 'terminal') {
     throw new FlipError('Kan inte vända: trädet har inga variabler att ordna om.')
   }
-  const flipped = built.node
+  return built.node
+}
 
-  // ── EVs, informational only (the app computes its own displayed VOC as
-  //    |EV_left − EV_right|, independent of these fields). ──
+/** Full sequence reversal (segment 22): the flipped tree reverses the ENTIRE
+ * node sequence along every path, regardless of node type (a→b→c becomes
+ * c→b→a). A purely structural mirror — each moved node keeps its own outcomes
+ * and their probabilities, copied unchanged (no Bayesian recomputation). Not
+ * "value of clairvoyance" semantics anymore (a decision can end up before
+ * information it originally depended on), so EV is not guaranteed to increase
+ * and the app shows VOC as the direction-agnostic |EV_left − EV_right|. */
+export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
+  const c = collectCanonical(root)
+  const order = c.canonical.slice().reverse()
+  let idCounter = 0
+  const flipped = buildFromOrder(c, order, () => `flip_${++idCounter}`, false)
+
   let originalEv = NaN
   let flippedEv = NaN
   try {
@@ -307,4 +326,44 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
   }
 
   return { flipped, voc: flippedEv - originalEv, originalEv, flippedEv }
+}
+
+function anyConditionalTable(root: TreeNodeType): boolean {
+  const walk = (n: TreeNodeType): boolean => {
+    if (n.conditionalTable.length > 0) return true
+    for (const o of n.outcomes) if (o.child && walk(o.child)) return true
+    return false
+  }
+  return walk(root)
+}
+
+/** Swaps two ADJACENT levels of the tree (`upperDepth` and `upperDepth + 1`),
+ * returning a fresh restructured tree — the in-place pill-drag reorder. Unlike
+ * the flip, linked groups are preserved (`preserveGroups`). Fails loud when:
+ *  - the tree isn't level-consistent (the canonical validation throws — this is
+ *    also what an unlinked instance trips, since it breaks a level's single-
+ *    variable identity: you can't reorder past a bortkoppling); or
+ *  - any node has a conditional table (the rebuild would silently flatten it,
+ *    and a table pins the node's context — you can't reorder past it); or
+ *  - `upperDepth` is out of range.
+ * The caller supplies `nid` (the app's own id generator) so new nodes get ids
+ * consistent with the rest of the tree. */
+export function reorderAdjacentLevels(
+  root: TreeNodeType,
+  upperDepth: number,
+  nid: () => string,
+): TreeNodeType {
+  if (anyConditionalTable(root)) {
+    throw new FlipError(
+      'Kan inte byta ordning: trädet har en villkorstabell. En villkorstabell låser ' +
+        'nodens position (dess sannolikheter beror på kontexten) — ta bort den för att ordna om.',
+    )
+  }
+  const c = collectCanonical(root)
+  if (upperDepth < 0 || upperDepth + 1 >= c.canonical.length) {
+    throw new FlipError('Kan inte byta ordning: ingen grannivå att byta med.')
+  }
+  const order = c.canonical.slice()
+  ;[order[upperDepth], order[upperDepth + 1]] = [order[upperDepth + 1], order[upperDepth]]
+  return buildFromOrder(c, order, nid, true)
 }

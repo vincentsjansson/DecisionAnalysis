@@ -239,6 +239,14 @@ button.primary:hover {
   color: var(--accent);
 }
 
+/* A level that can't be reordered (conditional table, or a non-uniform/
+   unlinked level) — shown as a fixed wall via a dashed, dimmed border. */
+.pill.locked {
+  border-style: dashed;
+  color: var(--muted);
+  cursor: help;
+}
+
 .pill-arrow {
   font-family: var(--font-mono);
   font-size: 12px;

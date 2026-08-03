@@ -17,14 +17,13 @@ import {
   removeOutcomeFromGroup,
   renameOutcomeInGroup,
   renameVariable,
-  reorderOutcomeInGroup,
   setNodeTypeInGroup,
   syncProbabilitiesFromNode,
   unlinkNode,
 } from '../model/variable'
 import { backwardFill } from '../model/backwardFill'
 import { resolveProbability } from '../model/conditionalProbability'
-import { reverseTreeWithBayes } from '../model/bayesReversal'
+import { reorderAdjacentLevels, reverseTreeWithBayes } from '../model/bayesReversal'
 import { deserializeDocument, documentFilename, documentToJson } from '../model/document'
 import type { DecisionDocument } from '../model/document'
 import { certaintyEquivalent } from '../model/expectedUtility'
@@ -90,9 +89,11 @@ export interface AppApi {
   unlinkVariable(node: TreeNode): void
   renameOutcomeOn(node: TreeNode, edge: Outcome, newLabel: string): void
   removeOutcomeFrom(node: TreeNode, edge: Outcome): void
-  /** Reorders `node`'s outcomes (sibling reorder), syncing order across the
-   * linked variable group. Used by the pill bar's drag-and-drop. */
-  reorderOutcome(node: TreeNode, from: number, to: number): void
+  /** Swaps two adjacent LEVELS of the tree that `panelRoot` roots (the level at
+   * `upperDepth` and the one below it), restructuring that tree in place. Used
+   * by the pill bar's drag-and-drop. Throws `FlipError` if the swap is invalid
+   * (conditional table / unlink boundary / not level-consistent). */
+  reorderLevels(panelRoot: TreeNode, upperDepth: number): void
   setProbability(edge: Outcome, probability: number): void
   setValue(edge: Outcome, value: number | undefined): void
   setConditionalTable(node: TreeNode, rows: ConditionalRow[]): void
@@ -689,9 +690,18 @@ export function createApp(
       render()
     },
 
-    reorderOutcome(node, from, to) {
-      reorderOutcomeInGroup(rootOf(node), node, from, to)
-      touchTree(node)
+    reorderLevels(panelRoot, upperDepth) {
+      // Rebuilds the panel's tree with the two adjacent levels swapped (throws
+      // FlipError on an invalid swap — caller guards). Replaces the tree in
+      // place; new node ids mean the previous selection no longer resolves.
+      const restructured = reorderAdjacentLevels(panelRoot, upperDepth, nextId)
+      if (panelRoot === state.rightRoot) {
+        state.rightRoot = restructured
+        state.rightEdited = true
+      } else {
+        state.root = restructured
+      }
+      state.selected = null
       markDirty()
       render()
     },
@@ -921,12 +931,49 @@ export function createApp(
   })
 
   // ── Pill sequence bar (one per panel) ──
-  // Shows each tree's ACTUAL node order, derived from the live tree (never a
-  // hardcoded per-side assumption — a hand-edited right tree shows its real
-  // order). Dragging a pill reorders it among its SIBLINGS under the same parent
-  // only; clicking a pill opens the same edit menu as the node, minus the
-  // conditional-table and Koppla-loss entries (spec part 5).
-  let draggedPill: { parentId: string; index: number } | null = null
+  // Shows each tree's ACTUAL level sequence — ONE pill per depth-level (the
+  // variable at that level), with → arrows for traversal direction. Derived
+  // from the live tree, never hardcoded per side. Dragging a pill onto an
+  // ADJACENT pill swaps those two levels, restructuring the real tree in place
+  // (api.reorderLevels). Clicking a pill opens the same edit menu as the node,
+  // minus the conditional-table and Koppla-loss entries.
+  interface LevelInfo {
+    depth: number
+    label: string
+    nodeType: NodeType
+    primary: TreeNode
+    /** All nodes at this depth are the same variable (one variableId + type).
+     * False when an unlinked/diverged instance breaks the level — such a level
+     * can't be reordered past (matches the "no reorder past a bortkoppling"
+     * rule); the reorder call also fails loud if attempted. */
+    uniform: boolean
+    /** Some node at this depth has a conditional table — a reorder wall. */
+    hasTable: boolean
+  }
+
+  const levelSequence = (root: TreeNode): LevelInfo[] => {
+    const byDepth: TreeNode[][] = []
+    const walk = (n: TreeNode, d: number): void => {
+      ;(byDepth[d] ??= []).push(n)
+      for (const o of n.outcomes) if (o.child) walk(o.child, d + 1)
+    }
+    walk(root, 0)
+    return byDepth.map((nodes, depth) => {
+      const first = nodes[0]
+      return {
+        depth,
+        label: first.label,
+        nodeType: first.nodeType,
+        primary: first,
+        uniform: nodes.every(
+          (n) => n.variableId === first.variableId && n.nodeType === first.nodeType,
+        ),
+        hasTable: nodes.some((n) => n.conditionalTable.length > 0),
+      }
+    })
+  }
+
+  let draggedLevel: { root: TreeNode; depth: number } | null = null
 
   const renderPillBar = (barEl: HTMLElement, root: TreeNode | null): void => {
     barEl.replaceChildren()
@@ -936,8 +983,13 @@ export function createApp(
     }
     barEl.style.display = ''
 
-    const addPill = (node: TreeNode, parent: TreeNode | null, index: number): void => {
-      if (parent) {
+    const levels = levelSequence(root)
+    // A level is a fixed "wall" (can't be moved / crossed) when it isn't a
+    // single uniform variable or carries a conditional table.
+    const locked = (lvl: LevelInfo): boolean => !lvl.uniform || lvl.hasTable
+
+    levels.forEach((lvl, i) => {
+      if (i > 0) {
         const arrow = document.createElement('span')
         arrow.className = 'pill-arrow'
         arrow.textContent = '→'
@@ -945,45 +997,46 @@ export function createApp(
       }
       const pill = document.createElement('button')
       pill.type = 'button'
-      pill.className = `pill pill-${node.nodeType}${node === state.selected ? ' selected' : ''}`
-      pill.textContent = displayName(node)
-      // Use pill-scoped data attributes (NOT data-node-id) so tree-node queries
-      // never match a pill.
-      pill.dataset.pillNode = node.id
+      pill.className =
+        `pill pill-${lvl.nodeType}` +
+        (lvl.primary === state.selected ? ' selected' : '') +
+        (locked(lvl) ? ' locked' : '')
+      pill.textContent = lvl.label
+      pill.dataset.pillDepth = String(lvl.depth)
+      if (locked(lvl)) {
+        pill.title = lvl.hasTable
+          ? 'Har villkorstabell — låst position, kan inte ordnas om.'
+          : 'Nivån är inte en enhetlig variabel (t.ex. en frikopplad instans) — kan inte ordnas om.'
+      }
       pill.addEventListener('click', (e) => {
         e.stopPropagation() // else the container click-away closes the menu at once
-        api.selectNode(node)
-        openNodeMenu(node, e.clientX, e.clientY, { fromPill: true })
+        api.selectNode(lvl.primary)
+        openNodeMenu(lvl.primary, e.clientX, e.clientY, { fromPill: true })
       })
-      // Only non-root pills (which have a parent and thus siblings) drag/reorder.
-      if (parent) {
-        pill.dataset.pillParent = parent.id
-        pill.dataset.pillIndex = String(index)
-        pill.draggable = true
-        pill.addEventListener('dragstart', () => {
-          draggedPill = { parentId: parent.id, index }
-        })
-        pill.addEventListener('dragover', (e) => {
-          if (draggedPill && draggedPill.parentId === parent.id) e.preventDefault()
-        })
-        pill.addEventListener('drop', (e) => {
+      pill.draggable = true
+      pill.addEventListener('dragstart', () => {
+        draggedLevel = { root, depth: lvl.depth }
+      })
+      pill.addEventListener('dragover', (e) => {
+        // Allow the drop only for an ADJACENT level in the SAME panel.
+        if (draggedLevel && draggedLevel.root === root && Math.abs(draggedLevel.depth - lvl.depth) === 1) {
           e.preventDefault()
-          if (draggedPill && draggedPill.parentId === parent.id) {
-            api.reorderOutcome(parent, draggedPill.index, index)
-          }
-          draggedPill = null
-        })
-        pill.addEventListener('dragend', () => {
-          draggedPill = null
-        })
-      }
-      barEl.appendChild(pill)
-      // Recurse in outcome order so the bar mirrors the tree's real traversal.
-      node.outcomes.forEach((o, i) => {
-        if (o.child) addPill(o.child, node, i)
+        }
       })
-    }
-    addPill(root, null, -1)
+      pill.addEventListener('drop', (e) => {
+        e.preventDefault()
+        const dragged = draggedLevel
+        draggedLevel = null
+        if (!dragged || dragged.root !== root) return
+        if (Math.abs(dragged.depth - lvl.depth) !== 1) return
+        // Swap the two adjacent levels (upperDepth = the smaller of the two).
+        guarded(() => api.reorderLevels(root, Math.min(dragged.depth, lvl.depth)))
+      })
+      pill.addEventListener('dragend', () => {
+        draggedLevel = null
+      })
+      barEl.appendChild(pill)
+    })
   }
 
   // ── Dialogs ──
