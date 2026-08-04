@@ -4,6 +4,16 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-04 (segment 26) — Spara-dropdown (fil / PNG under en knapp)
+
+**Vad hände:** Användarönskemål: slå ihop de två separata knapparna (💾 Spara + 🖼 PNG) till **en** "Spara"-dropdown med två val, i linje med appens estetik. Bara spara-ikonen kvar (PNG-ikonen borttagen från topbaren).
+
+**Implementation (`app.ts`):** Extraherade `saveAsFile()` (JSON-nedladdning) och `saveAsPng()` (PNG-export, oförändrad logik inkl. dubbelträd i split) ur de gamla knapp-handlerna. Ny `openSaveMenu()` bygger en dropdown med **samma `.menu`/`.menu-item`-komponent som nodkontextmenyn** (`menuItem`-hjälparen, `menuLayer`, `closeMenu`), ankrad under Spara-knappen via `getBoundingClientRect`-matte relativt `container`. Knappen heter nu "💾 Spara ▾" och öppnar bara dropdownen; den befintliga click-away-lyssnaren (`container` click → `closeMenu` om ej `.menu`) stänger den. `#save-png`-knappen borttagen.
+
+**Testresultat:** 255 gröna (test omskrivet: Spara-dropdown innehåller "Spara som fil" + "Spara som PNG", ingen fristående `#save-png`, PNG-val på tomt träd → "Inget träd att exportera"). `tsc` + build rena. **Live-verifierat:** klick på Spara → dropdown med två val ankrad under knappen; "Spara som PNG" kör exporten (meddelande bekräftar), menyval stänger dropdownen, klick-utanför stänger den, öppna igen fungerar. Inga konsolfel. (Ren UI-omgruppering — spara-funktionerna oförändrade.)
+
+---
+
 ## 2026-08-04 (segment 25) — PNG-export med transparent bakgrund
 
 **Vad byggdes:** Den sista ❌-punkten i backloggen: exportera trädet som en PNG-bild med transparent bakgrund. Ny 🖼 PNG-knapp bredvid 💾 Spara.

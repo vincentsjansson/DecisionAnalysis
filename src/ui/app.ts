@@ -190,11 +190,8 @@ export function createApp(
   modeBtn.id = 'mode-toggle'
   const saveBtn = document.createElement('button')
   saveBtn.id = 'save'
-  saveBtn.textContent = '💾 Spara'
-  const pngBtn = document.createElement('button')
-  pngBtn.id = 'save-png'
-  pngBtn.textContent = '🖼 PNG'
-  pngBtn.title = 'Spara trädet som PNG-bild (transparent bakgrund)'
+  saveBtn.textContent = '💾 Spara ▾'
+  saveBtn.title = 'Spara som fil (JSON) eller som PNG-bild'
   const loadBtn = document.createElement('button')
   loadBtn.id = 'load'
   loadBtn.textContent = '📂 Ladda'
@@ -202,7 +199,7 @@ export function createApp(
   fileInput.type = 'file'
   fileInput.accept = 'application/json,.json'
   fileInput.style.display = 'none'
-  topbar.append(title, addBtn, flipBtn, undoBtn, redoBtn, modeBtn, saveBtn, pngBtn, loadBtn, fileInput)
+  topbar.append(title, addBtn, flipBtn, undoBtn, redoBtn, modeBtn, saveBtn, loadBtn, fileInput)
 
   const messageStrip = document.createElement('div')
   messageStrip.className = 'message-strip'
@@ -1690,9 +1687,8 @@ export function createApp(
     api.toggleSplit()
   })
 
-  // ── Save / load ──
-  saveBtn.addEventListener('click', (e) => {
-    e.stopPropagation()
+  // ── Save (dropdown: file / PNG) / load ──
+  const saveAsFile = (): void => {
     const json = api.exportDocument()
     const blob = new Blob([json], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -1702,10 +1698,9 @@ export function createApp(
     a.click()
     URL.revokeObjectURL(url)
     setMessage(`Sparat som ${a.download}.`)
-  })
+  }
 
-  pngBtn.addEventListener('click', (e) => {
-    e.stopPropagation()
+  const saveAsPng = (): void => {
     const treeSvg = canvasHost.querySelector('svg') as SVGSVGElement | null
     if (!state.root || !treeSvg) {
       setMessage('Inget träd att exportera.')
@@ -1729,6 +1724,28 @@ export function createApp(
           : 'Kunde inte exportera — trädet är tomt.',
       )
     })
+  }
+
+  /** Opens the Save dropdown anchored under the Save button, reusing the shared
+   * context-menu styling so it matches the node menu's look. */
+  const openSaveMenu = (): void => {
+    closeMenu()
+    const menu = document.createElement('div')
+    menu.className = 'menu'
+    const crect = container.getBoundingClientRect()
+    const brect = saveBtn.getBoundingClientRect()
+    menu.style.left = `${brect.left - crect.left}px`
+    menu.style.top = `${brect.bottom - crect.top + 2}px`
+    menu.append(
+      menuItem('💾 Spara som fil', saveAsFile),
+      menuItem('🖼 Spara som PNG', saveAsPng),
+    )
+    menuLayer.appendChild(menu)
+  }
+
+  saveBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    openSaveMenu()
   })
 
   loadBtn.addEventListener('click', (e) => {

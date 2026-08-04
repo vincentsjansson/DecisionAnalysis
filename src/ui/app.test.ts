@@ -648,15 +648,24 @@ describe('createApp', () => {
     expect(fresh.state.dirty).toBe(false)
   })
 
-  it('has a PNG export button next to Save; on an empty tree it reports nothing to export', () => {
+  it('Save is a dropdown with "spara som fil" and "spara som PNG"; PNG on empty reports nothing', () => {
     const { app, container } = newApp()
-    const pngBtn = container.querySelector('#save-png') as HTMLButtonElement
-    expect(pngBtn).not.toBeNull()
-    expect(pngBtn.textContent).toContain('PNG')
-    // No tree yet -> clicking reports there's nothing to export (no crash; the
-    // actual rasterization path — getBBox/canvas/Image — isn't available in jsdom
-    // and is verified live instead).
-    pngBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    const saveBtn = container.querySelector('#save') as HTMLButtonElement
+    expect(saveBtn.textContent).toContain('Spara')
+    // No standalone PNG button anymore — it lives in the dropdown.
+    expect(container.querySelector('#save-png')).toBeNull()
+
+    // Open the dropdown.
+    saveBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    const items = [...container.querySelectorAll('.menu-item')].map((b) => b.textContent)
+    expect(items.some((t) => t?.includes('Spara som fil'))).toBe(true)
+    expect(items.some((t) => t?.includes('Spara som PNG'))).toBe(true)
+
+    // Click "Spara som PNG" with no tree -> reports nothing to export (no crash;
+    // the real rasterization path isn't available in jsdom and is verified live).
+    ;[...container.querySelectorAll('.menu-item')]
+      .find((b) => b.textContent?.includes('Spara som PNG'))!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
     expect(app.state.message).toContain('Inget träd att exportera')
   })
 
