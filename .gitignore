@@ -1,0 +1,13 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+__pycache__/
+*.pyc
+.pytest_cache/
+
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
