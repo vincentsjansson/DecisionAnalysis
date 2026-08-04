@@ -119,6 +119,43 @@ body {
   margin: 0 2px;
 }
 
+/* Language toggle — a small segmented SV/EN control in the title-block strip. */
+.lang-toggle {
+  display: flex;
+  align-self: center;
+  margin: 0 14px;
+  border: 1px solid var(--muted);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.lang-btn {
+  border: none;
+  border-radius: 0;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  background: var(--paper);
+}
+
+.lang-btn + .lang-btn {
+  border-left: 1px solid var(--muted);
+}
+
+.lang-btn:hover {
+  background: var(--faint);
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+.lang-btn.active,
+.lang-btn.active:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
 button {
   font: inherit;
   color: var(--ink);

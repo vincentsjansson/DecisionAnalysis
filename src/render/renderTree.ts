@@ -5,6 +5,7 @@ import { calculateExpectedValue } from '../model/expectedValue'
 import { certaintyEquivalent } from '../model/expectedUtility'
 import type { UtilityFunction } from '../model/utility'
 import { ProbabilitySumError, sumProbabilities } from '../model/validateProbabilities'
+import { t } from '../i18n'
 import type { NodeBox } from './layout'
 import { layoutTree, mirrorLayout } from './layout'
 
@@ -78,12 +79,12 @@ function nodeWarningText(box: NodeBox): string | null {
   if (box.node.nodeType !== 'chance' || box.node.outcomes.length === 0) return null
   try {
     const sum = sumProbabilities(box.node, box.history)
-    if (Number.isNaN(sum)) return 'p ofullständig'
-    if (Math.abs(sum - 1) > 1e-6) return `Σ = ${fmt(sum)} ⚠`
+    if (Number.isNaN(sum)) return t().pIncompleteShort
+    if (Math.abs(sum - 1) > 1e-6) return t().sumShort(fmt(sum))
     return null
   } catch (e) {
-    if (e instanceof ProbabilitySumError) return `Σ = ${fmt(e.sum)} ⚠`
-    return '⚠ villkor tvetydiga'
+    if (e instanceof ProbabilitySumError) return t().sumShort(fmt(e.sum))
+    return t().ambiguousConditions
   }
 }
 
@@ -118,10 +119,10 @@ function appendStateBadge(g: SVGGElement, box: NodeBox, linked: boolean): void {
   let tip = ''
   if (tableDriven) {
     glyph = '⊞'
-    tip = 'Villkorstabell — styr egna sannolikheter, synkas inte med gruppen'
+    tip = t().badgeTableTip
   } else if (linked) {
     glyph = '⛓'
-    tip = 'Länkad instans — utfall och sannolikheter synkas med samma variabel på andra grenar'
+    tip = t().badgeLinkedTip
   }
   if (!glyph) return
   const badge = text(box.w / 2 + 7, -box.h / 2 + 2, glyph, 'node-badge')
@@ -156,7 +157,7 @@ export function renderTree(
   if (!root) {
     const empty = document.createElement('div')
     empty.className = 'empty-hint'
-    empty.textContent = 'Tomt träd — klicka "Lägg till nod" för att skapa en rotnod.'
+    empty.textContent = t().emptyHint
     host.appendChild(empty)
     return svg
   }

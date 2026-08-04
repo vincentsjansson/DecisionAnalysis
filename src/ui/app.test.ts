@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { Outcome, TreeNode } from '../model/tree'
 import { validateProbabilities } from '../model/validateProbabilities'
 import { collectGroup } from '../model/variable'
+import { setLang } from '../i18n'
 import { createApp, distributeSumToOne } from './app'
 
 function newApp(confirmAnswer = true) {
@@ -1621,5 +1622,52 @@ describe('pill sequence bar', () => {
     // ...but the two tree-only operations are hidden from a pill click.
     expect(items.some((t) => t?.includes('Villkorstabell'))).toBe(false)
     expect(items.some((t) => t?.includes('Koppla loss'))).toBe(false)
+  })
+})
+
+describe('language toggle (SV / EN)', () => {
+  // Restore the default language after each test so the rest of the suite (which
+  // asserts Swedish strings) keeps running in Swedish — i18n state is module-global.
+  afterEach(() => setLang('sv'))
+
+  it('switches the whole chrome between Swedish and English, marks the active button', () => {
+    const { container } = newApp()
+    const svBtn = container.querySelector('.lang-btn[data-lang="sv"]') as HTMLButtonElement
+    const enBtn = container.querySelector('.lang-btn[data-lang="en"]') as HTMLButtonElement
+    expect(svBtn).not.toBeNull()
+    expect(enBtn).not.toBeNull()
+    // Default: Swedish, SV active.
+    expect(container.querySelector('#add-node')!.textContent).toBe('Lägg till nod')
+    expect(svBtn.classList.contains('active')).toBe(true)
+    expect(enBtn.classList.contains('active')).toBe(false)
+
+    // Switch to English.
+    enBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(container.querySelector('#add-node')!.textContent).toBe('Add node')
+    expect(container.querySelector('#load')!.textContent).toBe('Load')
+    expect(container.querySelector('.title-field-label')!.textContent).toBe('DECISION TREE')
+    expect(container.querySelector('.empty-hint')!.textContent).toContain('Empty tree')
+    expect(enBtn.classList.contains('active')).toBe(true)
+    expect(svBtn.classList.contains('active')).toBe(false)
+
+    // Switch back to Swedish.
+    svBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(container.querySelector('#add-node')!.textContent).toBe('Lägg till nod')
+    expect(container.querySelector('.empty-hint')!.textContent).toContain('Tomt träd')
+  })
+
+  it('translates dialogs opened after the switch (context menu in English)', () => {
+    const { app, container } = newApp()
+    ;(container.querySelector('.lang-btn[data-lang="en"]') as HTMLButtonElement).dispatchEvent(
+      new MouseEvent('click', { bubbles: true }),
+    )
+    app.api.createRoot('chance', 'C')
+    container
+      .querySelector('[data-node-id]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    const items = [...container.querySelectorAll('.menu-item')].map((b) => b.textContent)
+    expect(items.some((x) => x?.includes('Edit outcomes'))).toBe(true)
+    expect(items.some((x) => x?.includes('Delete node'))).toBe(true)
+    expect(items.some((x) => x?.includes('Redigera'))).toBe(false)
   })
 })

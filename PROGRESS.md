@@ -4,6 +4,28 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-04 (segment 28) — Språkväxlare (SV/EN) + i18n av hela gränssnittet
+
+**Vad byggdes:** En liten SV/EN-växlare längst till höger i toppremsan; klick byter språk för hela gränssnittet och sparar valet (localStorage). Bara två språk (svenska default, engelska) per kursens kontext.
+
+**i18n-lager (`src/i18n.ts`, ny modul):** `Lang = 'sv' | 'en'`, `getLang`/`setLang` (persist:ar till localStorage), och en **typad `Dict`-interface** med en `sv`- och en `en`-implementation — så språken inte kan glida isär (saknad nyckel = kompileringsfel). `t()` returnerar aktivt språks dict. **De svenska strängarna är byte-identiska med den tidigare koden**, så hela testsviten (som asserterar svenska) förblir grön med default sv. ~110 nycklar (statiska strängar + funktioner för interpolerade).
+
+**Konvertering:** allt användarvänt i `src/ui/app.ts` (topbar, utility-bar, pane-captions, kontextmeny, pill-titlar, alla dialoger — namn/rot/utfall/divergens/villkorstabell/terminal/attach/elicitering, VOC-/trace-barer, meddelanden, bekräftelser) och `src/render/renderTree.ts` (empty-hint, Σ-varningar, nod-badge-tooltips) läser nu `t()`. **Statiska element** (byggs en gång) om-textas av en ny `syncStaticLabels()` som körs i varje `render()`; **dynamiska element** (dialoger/menyer/barer/meddelanden) läser `t()` när de byggs. Språkväxling anropar `setLang` + `render()` → allt uppdateras.
+
+**Växlaren (UI):** `.lang-toggle` — segmenterad SV/EN, aktivt språk i accent-färg, ankrad till höger i titelblocket. Matchar rit-estetiken (mono, hårfin).
+
+**Scope-beslut (kommunicerat):** modell-lagrets djupa felmeddelanden (`FlipError`/`DocumentError`/`VariableConflictError` m.fl. — kantfall vid ogiltig flip/laddning) hålls på **svenska** i detta steg, för att hålla ändringen fokuserad på det synliga gränssnittet och lågrisk. De kan routas genom samma `t()` härnäst om det önskas.
+
+**Testresultat:** 257 gröna (+2 språktester: hela chrome växlar SV↔EN + aktiv-knapp-markering; dialoger öppnade efter växling är översatta). En `afterEach(() => setLang('sv'))` i språk-describe:n återställer det modul-globala språket så resten av sviten kör svenska. `tsc` + build rena. **Live-verifierat:** växla EN → "Add node"/"Save ▾"/"DECISION TREE"/engelsk empty-hint/engelsk nodmeny/save-dropdown/VOC-hint; localStorage sparar `en`; reload behåller EN; växla tillbaka → svenska. Inga konsolfel.
+
+**Judgment calls:**
+1. **Byte-identiska sv-strängar** — dict:ens svenska matchar exakt tidigare hårdkodad text, så testsviten är säkerhetsnätet för sv-sidan (en avvikelse bryter ett test). En typad `Dict` garanterar en-sidan har varje nyckel.
+2. **`syncStaticLabels()` i `render()`** — statiska element byggs en gång, så språkbyte kräver om-textning; att köra det varje render (billigt) håller dem i synk utan separat listener-hantering.
+3. **localStorage-persistens** läses en gång vid modul-init (`readInitial`); språk-state är modul-globalt. Tester återställer via `afterEach` för att undvika läckage mellan tester.
+4. **Modell-fel på svenska (v1)** — se scope-beslutet ovan.
+
+---
+
 ## 2026-08-04 (segment 27) — Toppmeny som rit-titelblock + pill-former matchar noderna
 
 **Vad hände:** Användaren tyckte toppmenyn inte följde rit-estetiken, och att pillarna hade lite annan form än noderna. Ställde tre designfrågor (svar: **lätta hairline-knappar**, **monokrom/text — bort med emoji**, **rit-titelblock**) och ritade om därefter.

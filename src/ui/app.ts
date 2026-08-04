@@ -41,6 +41,8 @@ import {
 import type { UtilityFunction, UtilityType } from '../model/utility'
 import { applyViewTransform, fmt, renderTree } from '../render/renderTree'
 import { exportTreePng } from '../render/pngExport'
+import { getLang, setLang, t } from '../i18n'
+import type { Lang } from '../i18n'
 import type { DisplayMode, ViewTransform } from '../render/renderTree'
 
 export interface AppState {
@@ -172,37 +174,26 @@ export function createApp(
   titleBlock.className = 'title-block'
   const titleField = document.createElement('span')
   titleField.className = 'title-field-label'
-  titleField.textContent = 'BESLUTSTRÄD'
   const title = document.createElement('span')
   title.className = 'app-title'
-  title.textContent = 'DecisionAnalysis'
+  title.textContent = 'DecisionAnalysis' // brand name — not translated
   titleBlock.append(titleField, title)
   const addBtn = document.createElement('button')
   addBtn.id = 'add-node'
-  addBtn.textContent = 'Lägg till nod'
   const flipBtn = document.createElement('button')
   flipBtn.id = 'flip'
-  flipBtn.textContent = '⇄ Flip'
-  flipBtn.title =
-    'Visar trädet omvänt (alla slumputfall kända innan besluten) bredvid ditt ' +
-    'träd och räknar ut VOC — värdet av klarsyn. Klicka igen för att stänga.'
   const undoBtn = document.createElement('button')
   undoBtn.id = 'undo'
   undoBtn.textContent = '↶'
-  undoBtn.title = 'Ångra (Ctrl+Z)'
   const redoBtn = document.createElement('button')
   redoBtn.id = 'redo'
   redoBtn.textContent = '↷'
-  redoBtn.title = 'Gör om (Ctrl+Shift+Z)'
   const modeBtn = document.createElement('button')
   modeBtn.id = 'mode-toggle'
   const saveBtn = document.createElement('button')
   saveBtn.id = 'save'
-  saveBtn.textContent = 'Spara ▾'
-  saveBtn.title = 'Spara som fil (JSON) eller som PNG-bild'
   const loadBtn = document.createElement('button')
   loadBtn.id = 'load'
-  loadBtn.textContent = 'Ladda'
   const fileInput = document.createElement('input')
   fileInput.type = 'file'
   fileInput.accept = 'application/json,.json'
@@ -229,7 +220,19 @@ export function createApp(
     loadBtn,
     fileInput,
   )
-  topbar.append(titleBlock, tools)
+  // Language toggle (SV / EN), pushed to the far right of the bar.
+  const langToggle = document.createElement('div')
+  langToggle.className = 'lang-toggle'
+  const langSv = document.createElement('button')
+  langSv.className = 'lang-btn'
+  langSv.textContent = 'SV'
+  langSv.dataset.lang = 'sv'
+  const langEn = document.createElement('button')
+  langEn.className = 'lang-btn'
+  langEn.textContent = 'EN'
+  langEn.dataset.lang = 'en'
+  langToggle.append(langSv, langEn)
+  topbar.append(titleBlock, tools, langToggle)
 
   const messageStrip = document.createElement('div')
   messageStrip.className = 'message-strip'
@@ -240,18 +243,13 @@ export function createApp(
   utilityBar.className = 'utility-bar'
   utilityBar.style.display = 'none'
   const utilityLabel = document.createElement('span')
-  utilityLabel.textContent = 'Nyttofunktion:'
   const utilityTypeSelect = document.createElement('select')
   utilityTypeSelect.id = 'utility-type'
-  for (const [value, label] of [
-    ['linear', 'Linjär (riskneutral)'],
-    ['exponential', 'Exponentiell'],
-  ] as const) {
-    const opt = document.createElement('option')
-    opt.value = value
-    opt.textContent = label
-    utilityTypeSelect.appendChild(opt)
-  }
+  const utilityLinearOpt = document.createElement('option')
+  utilityLinearOpt.value = 'linear'
+  const utilityExpOpt = document.createElement('option')
+  utilityExpOpt.value = 'exponential'
+  utilityTypeSelect.append(utilityLinearOpt, utilityExpOpt)
   // γ fine-tune input (exponential only) + elicitation launcher.
   const paramLabel = document.createElement('label')
   paramLabel.className = 'utility-param'
@@ -264,7 +262,6 @@ export function createApp(
   paramLabel.append(paramLabelText, paramInput)
   const elicitBtn = document.createElement('button')
   elicitBtn.id = 'elicit'
-  elicitBtn.textContent = 'Ställ in riskattityd…'
   const riskReadout = document.createElement('span')
   riskReadout.className = 'risk-readout'
   utilityBar.append(utilityLabel, utilityTypeSelect, paramLabel, elicitBtn, riskReadout)
@@ -282,10 +279,6 @@ export function createApp(
   const vocHint = document.createElement('div')
   vocHint.className = 'voc-hint'
   vocHint.style.display = 'none'
-  vocHint.textContent =
-    'VOC = värdet av klarsyn: hur mycket det förväntade värdet (EV) ökar om du ' +
-    'får veta alla slumputfall innan du fattar besluten. Höger träd visar det ' +
-    'omvända beslutsläget som VOC bygger på.'
 
   // Calculation-trace bar: shows the arithmetic behind the selected node's
   // value. Visible only while a node is selected.
@@ -312,16 +305,11 @@ export function createApp(
   rightHeader.className = 'pane-header'
   const rightCaption = document.createElement('div')
   rightCaption.className = 'pane-caption'
-  rightCaption.textContent = 'Omvänt träd (klarsyn) — redigerbart'
   // Deviation indicator: shown only once the right tree has been hand-edited
   // since its last generation, so the user knows VOC is now a free comparison.
   const rightDeviation = document.createElement('span')
   rightDeviation.className = 'deviation-badge'
   rightDeviation.style.display = 'none'
-  rightDeviation.textContent = '✎ redigerad sedan Sammanfoga'
-  rightDeviation.title =
-    'Höger träd har redigerats manuellt sedan det genererades. VOC är nu en ' +
-    'fri jämförelse (|EV vänster − EV höger|), inte en strikt klarsynsvärdering.'
   rightHeader.append(rightCaption, rightDeviation)
   const rightPillBar = document.createElement('div')
   rightPillBar.className = 'pill-bar'
@@ -691,17 +679,10 @@ export function createApp(
         node.nodeType === 'chance' ? mirrorLinkedInstances(owner, node, child, nextId) : []
       if (autoFilled.length > 0) {
         const shown = [child, ...autoFilled].slice(0, 6).map((n) => `"${displayName(n)}"`).join(', ')
-        const more = autoFilled.length + 1 > 6 ? ` (+${autoFilled.length + 1 - 6} till)` : ''
-        setMessage(
-          `Länkade instanser skapade: ${shown}${more}. ` +
-            `Utfallsuppsättning, nodtyp och sannolikheter synkas automatiskt ` +
-            `(en instans med egen villkorstabell styr sina egna sannolikheter).`,
-        )
+        const extra = Math.max(0, autoFilled.length + 1 - 6)
+        setMessage(t().linkedCreated(shown, extra))
       } else if (child.instanceIndex > 0) {
-        setMessage(
-          `Länkad till variabeln "${child.label}" — utfall synkas automatiskt ` +
-            `mellan alla instanser (visas som "${displayName(child)}").`,
-        )
+        setMessage(t().linkedToVariable(child.label, displayName(child)))
       }
       render()
       return child
@@ -728,7 +709,7 @@ export function createApp(
     unlinkVariable(node) {
       unlinkNode(rootOf(node), node)
       touchTree(node)
-      setMessage(`"${displayName(node)}" är nu frikopplad — egen variabel, synkas inte längre.`)
+      setMessage(t().unlinkedMessage(displayName(node)))
       markDirty()
       render()
     },
@@ -835,7 +816,7 @@ export function createApp(
       // Validate first, so a broken file never triggers a discard prompt.
       const doc = deserializeDocument(text)
       if (!opts?.skipConfirm && state.root && state.dirty) {
-        if (!confirmFn('Osparade ändringar går förlorade om du laddar en fil. Fortsätt?')) {
+        if (!confirmFn(t().unsavedConfirm)) {
           return false
         }
       }
@@ -944,39 +925,34 @@ export function createApp(
     const linked = groupSiblings(rootOf(node), node).length > 0
 
     menu.append(
-      menuItem(
-        linked ? '✎ Byt namn på variabeln' : '✎ Byt namn',
-        () =>
-          openNameDialog(
-            linked ? 'Variabelns namn (påverkar alla instanser)' : 'Nodens namn',
-            node.label,
-            (v) => guarded(() => api.renameNode(node, v)),
-          ),
+      menuItem(linked ? t().renameVariable : t().rename, () =>
+        openNameDialog(
+          linked ? t().nameDialogVariable : t().nameDialogNode,
+          node.label,
+          (v) => guarded(() => api.renameNode(node, v)),
+        ),
       ),
-      menuItem('☰ Redigera utfall', () => openOutcomesDialog(node)),
-      menuItem(
-        node.nodeType === 'chance' ? '⇄ Gör till beslutsnod' : '⇄ Gör till slumpnod',
-        () => guarded(() => api.toggleType(node)),
+      menuItem(t().editOutcomes, () => openOutcomesDialog(node)),
+      menuItem(node.nodeType === 'chance' ? t().makeDecision : t().makeChance, () =>
+        guarded(() => api.toggleType(node)),
       ),
     )
     // Conditional table and Koppla loss are deliberately NOT offered from a pill
     // click — they are structural/context operations reachable only from the
     // tree itself (spec part 5).
     if (node.nodeType === 'chance' && !opts.fromPill) {
-      menu.append(menuItem('⊞ Villkorstabell', () => openConditionalDialog(node)))
+      menu.append(menuItem(t().conditionalTable, () => openConditionalDialog(node)))
     }
     if (linked && !opts.fromPill) {
-      menu.append(
-        menuItem('⛓ Koppla loss från variabeln', () => guarded(() => api.unlinkVariable(node))),
-      )
+      menu.append(menuItem(t().unlinkFromVariable, () => guarded(() => api.unlinkVariable(node))))
     }
     menu.append(
-      menuItem('✕ Ta bort nod', () => {
+      menuItem(t().deleteNode, () => {
         const inc = incomingEdge(node)
         const what = inc
-          ? `"${displayName(node)}" och hela dess delträd tas bort — utfallet "${inc.edge.label}" blir en slutpunkt igen`
-          : `Hela trädet tas bort`
-        if (confirmFn(`${what}. Fortsätt?`)) guarded(() => api.deleteNode(node))
+          ? t().deleteSubtree(displayName(node), inc.edge.label)
+          : t().deleteWholeTree
+        if (confirmFn(t().deleteNodeConfirm(what))) guarded(() => api.deleteNode(node))
       }),
     )
 
@@ -1061,9 +1037,7 @@ export function createApp(
       pill.textContent = lvl.label
       pill.dataset.pillDepth = String(lvl.depth)
       if (locked(lvl)) {
-        pill.title = lvl.hasTable
-          ? 'Har villkorstabell — låst position, kan inte ordnas om.'
-          : 'Nivån är inte en enhetlig variabel (t.ex. en frikopplad instans) — kan inte ordnas om.'
+        pill.title = lvl.hasTable ? t().pillLockedTable : t().pillLockedNonUniform
       }
       pill.addEventListener('click', (e) => {
         e.stopPropagation() // else the container click-away closes the menu at once
@@ -1156,7 +1130,7 @@ export function createApp(
   ): void => {
     const { body, footer } = openDialog(titleText)
     const input = textInput(initial)
-    body.appendChild(fieldRow('Namn', input))
+    body.appendChild(fieldRow(t().name, input))
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && input.value.trim()) {
         closeDialog()
@@ -1164,9 +1138,9 @@ export function createApp(
       }
     })
     footer.append(
-      dialogButton('Avbryt', closeDialog),
+      dialogButton(t().cancel, closeDialog),
       dialogButton(
-        'OK',
+        t().ok,
         () => {
           if (!input.value.trim()) return
           closeDialog()
@@ -1178,24 +1152,30 @@ export function createApp(
     input.focus()
   }
 
-  const openCreateRootDialog = (): void => {
-    const { body, footer } = openDialog('Skapa rotnod')
-    const select = document.createElement('select')
-    for (const [value, text] of [
-      ['chance', 'Slumpnod'],
-      ['decision', 'Beslutsnod'],
-    ] as const) {
+  /** Two node-type options (chance/decision) for a <select>. */
+  const nodeTypeOptions = (): HTMLOptionElement[] =>
+    (
+      [
+        ['chance', t().nodeChance],
+        ['decision', t().nodeDecision],
+      ] as const
+    ).map(([value, text]) => {
       const opt = document.createElement('option')
       opt.value = value
       opt.textContent = text
-      select.appendChild(opt)
-    }
+      return opt
+    })
+
+  const openCreateRootDialog = (): void => {
+    const { body, footer } = openDialog(t().createRoot)
+    const select = document.createElement('select')
+    select.append(...nodeTypeOptions())
     const labelInput = textInput('')
-    body.append(fieldRow('Typ', select), fieldRow('Namn', labelInput))
+    body.append(fieldRow(t().type, select), fieldRow(t().name, labelInput))
     footer.append(
-      dialogButton('Avbryt', closeDialog),
+      dialogButton(t().cancel, closeDialog),
       dialogButton(
-        'Skapa',
+        t().create,
         () => {
           const label = labelInput.value.trim()
           if (!label) return
@@ -1212,7 +1192,7 @@ export function createApp(
    * nodes), explicit Normalisera button — never silent normalization. */
   const openOutcomesDialog = (node: TreeNode): void => {
     const isChance = node.nodeType === 'chance'
-    const { body, footer } = openDialog(`Utfall — ${displayName(node)}`)
+    const { body, footer } = openDialog(t().outcomesTitle(displayName(node)))
 
     // Explain how this instance relates to its linked group. Distinguish the
     // table-driven case (probabilities here don't apply / don't sync) from the
@@ -1221,18 +1201,10 @@ export function createApp(
     if (siblings.length > 0) {
       const note = document.createElement('p')
       note.className = 'sync-note'
-      if (hasConditionalTable(node)) {
-        note.textContent =
-          `Den här instansen styrs av sin villkorstabell — sannolikheterna nedan ` +
-          `används bara som fallback och synkas inte med gruppen (${siblings
-            .map((n) => displayName(n))
-            .join(', ')}). Ta bort villkorstabellen för att synka igen.`
-      } else {
-        note.textContent =
-          `Länkad till: ${siblings.map((n) => displayName(n)).join(', ')}. ` +
-          `Utfallsuppsättning och sannolikheter synkas i gruppen. Anger du andra ` +
-          `sannolikheter än gruppen får du välja om det ska gälla alla eller bara den här instansen.`
-      }
+      const sibNames = siblings.map((n) => displayName(n)).join(', ')
+      note.textContent = hasConditionalTable(node)
+        ? t().syncNoteTable(sibNames)
+        : t().syncNoteLinked(sibNames)
       body.appendChild(note)
     }
 
@@ -1265,10 +1237,10 @@ export function createApp(
         return
       }
       if (anyNaN) {
-        warning.textContent = 'p ofullständig — tomma sannolikheter visas som "–" i trädet'
+        warning.textContent = t().pIncomplete
         warning.style.display = ''
       } else if (Math.abs(sum - 1) > 1e-6) {
-        warning.textContent = `⚠ Summan är ${fmt(sum)}, förväntat 1`
+        warning.textContent = t().sumWarning(fmt(sum))
         warning.style.display = ''
       } else {
         warning.style.display = 'none'
@@ -1279,12 +1251,12 @@ export function createApp(
       const el = document.createElement('div')
       el.className = 'dialog-row'
       const labelInput = textInput(edge ? edge.label : '')
-      labelInput.placeholder = 'etikett'
+      labelInput.placeholder = t().outcomeLabelPlaceholder
       let probInput: HTMLInputElement | null = null
       el.appendChild(labelInput)
       if (isChance) {
         probInput = textInput(edge && Number.isFinite(edge.probability) ? String(edge.probability) : '')
-        probInput.placeholder = 'p'
+        probInput.placeholder = t().probPlaceholder
         probInput.className = 'prob'
         probInput.addEventListener('input', updateWarning)
         el.appendChild(probInput)
@@ -1292,7 +1264,7 @@ export function createApp(
       const row: Row = { edge, labelInput, probInput, removed: false, el }
       el.appendChild(
         dialogButton('✕', () => {
-          if (edge?.child && !confirmFn(`Utfallet "${edge.label}" har ett delträd som tas bort. Fortsätt?`)) {
+          if (edge?.child && !confirmFn(t().subtreeRemoveConfirm(edge.label))) {
             return
           }
           row.removed = true
@@ -1309,10 +1281,10 @@ export function createApp(
 
     const actions = document.createElement('div')
     actions.className = 'dialog-actions'
-    actions.appendChild(dialogButton('+ utfall', () => addRow(null)))
+    actions.appendChild(dialogButton(t().addOutcome, () => addRow(null)))
     if (isChance) {
       actions.appendChild(
-        dialogButton('Normalisera', () => {
+        dialogButton(t().normalize, () => {
           const active = rows.filter((r) => !r.removed && r.probInput)
           if (active.length === 0) return
           const vals = active.map((r) => parseNum(r.probInput!.value))
@@ -1339,16 +1311,16 @@ export function createApp(
     updateWarning()
 
     footer.append(
-      dialogButton('Avbryt', closeDialog),
+      dialogButton(t().cancel, closeDialog),
       dialogButton(
-        'Spara',
+        t().save_,
         () =>
           guarded(() => {
             const active = rows.filter((r) => !r.removed)
             const labels = active.map((r) => r.labelInput.value.trim())
-            if (labels.some((l) => !l)) throw new Error('Alla utfall måste ha en etikett')
+            if (labels.some((l) => !l)) throw new Error(t().allOutcomesNeedLabel)
             if (new Set(labels).size !== labels.length) {
-              throw new Error('Utfallsetiketter måste vara unika inom noden')
+              throw new Error(t().outcomeLabelsUnique)
             }
 
             // All edits route through the group-aware model functions so the
@@ -1419,26 +1391,22 @@ export function createApp(
   const openDivergenceDialog = (node: TreeNode): void => {
     const root = state.root ?? node
     const sibs = groupSiblings(root, node)
-    const { body, footer } = openDialog('Sannolikheterna skiljer sig från gruppen')
+    const { body, footer } = openDialog(t().divergenceTitle)
     const p = document.createElement('p')
-    p.textContent =
-      `"${displayName(node)}" är länkad till ${sibs.map((n) => displayName(n)).join(', ')}. ` +
-      `Du angav andra sannolikheter än gruppen. Vad vill du göra?`
+    p.textContent = t().divergenceBody(displayName(node), sibs.map((n) => displayName(n)).join(', '))
     body.appendChild(p)
     footer.append(
-      dialogButton('Bara den här instansen (koppla loss)', () =>
+      dialogButton(t().divergenceOwn, () =>
         guarded(() => {
           unlinkNode(root, node)
-          setMessage(
-            `"${displayName(node)}" är nu frikopplad — egen variabel med egna sannolikheter.`,
-          )
+          setMessage(t().unlinkedOwnProbs(displayName(node)))
           markDirty()
           closeDialog()
           render()
         }),
       ),
       dialogButton(
-        'Uppdatera hela gruppen',
+        t().divergenceGroup,
         () =>
           guarded(() => {
             syncProbabilitiesFromNode(root, node)
@@ -1454,11 +1422,11 @@ export function createApp(
   /** Legacy-style conditional matrix: rows = conditions, columns = the
    * node's outcomes. The base row edits the outcomes' base probabilities. */
   const openConditionalDialog = (node: TreeNode): void => {
-    const { body, footer } = openDialog(`Villkorstabell — ${displayName(node)}`)
+    const { body, footer } = openDialog(t().conditionalTitle(displayName(node)))
     const outcomeLabels = node.outcomes.map((o) => o.label)
     if (outcomeLabels.length === 0) {
-      body.textContent = 'Noden har inga utfall än — lägg till utfall först.'
-      footer.appendChild(dialogButton('Stäng', closeDialog, true))
+      body.textContent = t().noOutcomesYet
+      footer.appendChild(dialogButton(t().close, closeDialog, true))
       return
     }
 
@@ -1466,10 +1434,7 @@ export function createApp(
     if (state.root && groupSiblings(state.root, node).length > 0) {
       const info = document.createElement('p')
       info.className = 'sync-note'
-      info.textContent =
-        'Så länge den här instansen har en villkorstabell styr den sina egna ' +
-        'sannolikheter och synkas inte med gruppen. Tar du bort alla villkorsrader ' +
-        'börjar den synka igen och antar gruppens fördelning.'
+      info.textContent = t().tableSyncNote
       body.appendChild(info)
     }
 
@@ -1488,15 +1453,15 @@ export function createApp(
       }
       return `${o.label} = ${p}`
     })
-    const pathText = pathTokens.length > 0 ? pathTokens.map(tokenDisplay).join(', ') : 'roten'
-    resolvedLine.textContent = `Gäller för den här instansen (väg: ${pathText}): ${resolvedParts.join(' · ')}`
+    const pathText = pathTokens.length > 0 ? pathTokens.map(tokenDisplay).join(', ') : t().pathRoot
+    resolvedLine.textContent = t().resolvedForInstance(pathText, resolvedParts.join(' · '))
     body.appendChild(resolvedLine)
 
     const table = document.createElement('table')
     table.className = 'matrix'
     const thead = document.createElement('thead')
     const headRow = document.createElement('tr')
-    headRow.appendChild(document.createElement('th')).textContent = 'Villkor'
+    headRow.appendChild(document.createElement('th')).textContent = t().conditionColumn
     for (const label of outcomeLabels) {
       headRow.appendChild(document.createElement('th')).textContent = label
     }
@@ -1519,7 +1484,7 @@ export function createApp(
       const condCell = document.createElement('td')
       condCell.textContent = condition
         ? [...condition].map(tokenDisplay).join(' & ')
-        : '(bas)'
+        : t().baseRow
       if (!condition) condCell.className = 'base'
       tr.appendChild(condCell)
 
@@ -1568,7 +1533,7 @@ export function createApp(
     pickerRow.className = 'dialog-actions'
     pickerRow.append(
       picker,
-      dialogButton('+ villkor', () => {
+      dialogButton(t().addCondition, () => {
         if (!picker.value) return
         addMatrixRow(new Set([picker.value]), outcomeLabels.map(() => undefined))
       }),
@@ -1576,16 +1541,16 @@ export function createApp(
     if (tokens.length === 0) {
       const hint = document.createElement('p')
       hint.className = 'hint'
-      hint.textContent = 'Inga villkor tillgängliga — noden har inga förfäder med utfall.'
+      hint.textContent = t().noConditionsAvailable
       body.appendChild(hint)
     } else {
       body.appendChild(pickerRow)
     }
 
     footer.append(
-      dialogButton('Avbryt', closeDialog),
+      dialogButton(t().cancel, closeDialog),
       dialogButton(
-        'Spara',
+        t().save_,
         () =>
           guarded(() => {
             const base = matrixRows[0]
@@ -1613,30 +1578,30 @@ export function createApp(
   /** Terminal-outcome dialog: payoff + target joint probability (changed
    * fields only, like legacy), plus attaching a child node to grow the tree. */
   const openTerminalDialog = (node: TreeNode, edge: Outcome): void => {
-    const { body, footer } = openDialog(`${displayName(node)} → ${edge.label}`)
+    const { body, footer } = openDialog(t().terminalTitle(displayName(node), edge.label))
 
     const valueInput = textInput(edge.value !== undefined ? String(edge.value) : '')
-    valueInput.placeholder = 'osatt'
+    valueInput.placeholder = t().payoffPlaceholder
     const initialValue = valueInput.value
-    body.appendChild(fieldRow('Värde (payoff)', valueInput))
+    body.appendChild(fieldRow(t().payoffLabel, valueInput))
 
     // In EU mode, show the utility transform happening at this terminal.
     if (state.displayMode === 'eu') {
       const uTrace = traceTerminalUtility(edge.value, state.utilityFn)
       const uLine = document.createElement('p')
       uLine.className = 'trace-line'
-      uLine.textContent = `Nyttotransform: ${uTrace.text}`
+      uLine.textContent = t().utilityTransform(uTrace.text)
       body.appendChild(uLine)
     }
 
     const jointInput = textInput('')
-    jointInput.placeholder = 'mål-sannolikhet (0–1]'
-    body.appendChild(fieldRow('Sätt joint probability (backward-fill)', jointInput))
+    jointInput.placeholder = t().jointPlaceholder
+    body.appendChild(fieldRow(t().jointLabel, jointInput))
 
     const grow = document.createElement('div')
     grow.className = 'dialog-actions'
     grow.appendChild(
-      dialogButton('+ Lägg till barnnod…', () => {
+      dialogButton(t().addChildNode, () => {
         closeDialog()
         openAttachChildDialog(node, edge)
       }),
@@ -1644,9 +1609,9 @@ export function createApp(
     body.appendChild(grow)
 
     footer.append(
-      dialogButton('Avbryt', closeDialog),
+      dialogButton(t().cancel, closeDialog),
       dialogButton(
-        'OK',
+        t().ok,
         () =>
           guarded(() => {
             if (valueInput.value !== initialValue) {
@@ -1655,7 +1620,7 @@ export function createApp(
                 api.setValue(edge, undefined)
               } else {
                 const v = parseNum(raw)
-                if (Number.isNaN(v)) throw new Error('Värdet måste vara ett tal')
+                if (Number.isNaN(v)) throw new Error(t().valueMustBeNumber)
                 api.setValue(edge, v)
               }
             }
@@ -1672,23 +1637,15 @@ export function createApp(
   }
 
   const openAttachChildDialog = (node: TreeNode, edge: Outcome): void => {
-    const { body, footer } = openDialog(`Ny nod efter "${edge.label}"`)
+    const { body, footer } = openDialog(t().newNodeAfter(edge.label))
     const select = document.createElement('select')
-    for (const [value, text] of [
-      ['chance', 'Slumpnod'],
-      ['decision', 'Beslutsnod'],
-    ] as const) {
-      const opt = document.createElement('option')
-      opt.value = value
-      opt.textContent = text
-      select.appendChild(opt)
-    }
+    select.append(...nodeTypeOptions())
     const labelInput = textInput('')
-    body.append(fieldRow('Typ', select), fieldRow('Namn', labelInput))
+    body.append(fieldRow(t().type, select), fieldRow(t().name, labelInput))
     footer.append(
-      dialogButton('Avbryt', closeDialog),
+      dialogButton(t().cancel, closeDialog),
       dialogButton(
-        'Skapa',
+        t().create,
         () => {
           const label = labelInput.value.trim()
           if (!label) return
@@ -1706,9 +1663,7 @@ export function createApp(
     if (state.root === null) {
       openCreateRootDialog()
     } else {
-      setMessage(
-        'Trädet har redan en rot — klicka på en nod för att redigera, eller på en triangel för att bygga vidare.',
-      )
+      setMessage(t().rootExistsHint)
     }
   })
 
@@ -1716,6 +1671,20 @@ export function createApp(
     e.stopPropagation()
     api.toggleSplit()
   })
+
+  // Language toggle: re-render re-labels every static element and rebuilds the
+  // trees/bars in the chosen language (dynamic strings read t() on build).
+  for (const btn of [langSv, langEn]) {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const l = btn.dataset.lang as Lang
+      if (l !== getLang()) {
+        setLang(l)
+        closeMenu()
+        render()
+      }
+    })
+  }
 
   // ── Save (dropdown: file / PNG) / load ──
   const saveAsFile = (): void => {
@@ -1727,13 +1696,13 @@ export function createApp(
     a.download = documentFilename(state.root)
     a.click()
     URL.revokeObjectURL(url)
-    setMessage(`Sparat som ${a.download}.`)
+    setMessage(t().savedAs(a.download))
   }
 
   const saveAsPng = (): void => {
     const treeSvg = canvasHost.querySelector('svg') as SVGSVGElement | null
     if (!state.root || !treeSvg) {
-      setMessage('Inget träd att exportera.')
+      setMessage(t().nothingToExport)
       return
     }
     guarded(() => {
@@ -1750,8 +1719,8 @@ export function createApp(
       }
       setMessage(
         exported.length > 0
-          ? `Exporterade ${exported.join(' + ')} (PNG, transparent bakgrund).`
-          : 'Kunde inte exportera — trädet är tomt.',
+          ? t().exported(exported.join(' + '))
+          : t().couldNotExportEmpty,
       )
     })
   }
@@ -1766,10 +1735,7 @@ export function createApp(
     const brect = saveBtn.getBoundingClientRect()
     menu.style.left = `${brect.left - crect.left}px`
     menu.style.top = `${brect.bottom - crect.top + 2}px`
-    menu.append(
-      menuItem('Spara som fil', saveAsFile),
-      menuItem('Spara som PNG', saveAsPng),
-    )
+    menu.append(menuItem(t().saveAsFile, saveAsFile), menuItem(t().saveAsPng, saveAsPng))
     menuLayer.appendChild(menu)
   }
 
@@ -1791,12 +1757,12 @@ export function createApp(
       .then((text) => {
         fileInput.value = '' // let the same file be picked again later
         guarded(() => {
-          if (api.loadDocument(text)) setMessage(`Laddade ${file.name}.`)
+          if (api.loadDocument(text)) setMessage(t().loaded(file.name))
         })
       })
       .catch(() => {
         fileInput.value = ''
-        setMessage('Kunde inte läsa filen.')
+        setMessage(t().couldNotReadFile)
       })
   })
 
@@ -1824,32 +1790,29 @@ export function createApp(
    * quick reference-amount approximation), answer it, see the resulting γ and
    * risk odds r plus example certainty equivalents, then apply. */
   const openElicitationDialog = (): void => {
-    const { body, footer } = openDialog('Ställ in riskattityd (γ)')
+    const { body, footer } = openDialog(t().elicitTitle)
 
     const method = document.createElement('select')
     for (const [value, label] of [
-      ['indifference', 'Indifferens-fråga'],
-      ['reference', 'Snabb approximation (referensbelopp)'],
+      ['indifference', t().elicitIndifference],
+      ['reference', t().elicitReference],
     ] as const) {
       const opt = document.createElement('option')
       opt.value = value
       opt.textContent = label
       method.appendChild(opt)
     }
-    body.appendChild(fieldRow('Metod', method))
+    body.appendChild(fieldRow(t().elicitMethod, method))
 
     // Method 1 — indifference probability p.
-    const pField = fieldRow(
-      'Sannolikhet p: indifferent mellan 0 säkert och (p: vinn 1 / 1−p: förlora 1)',
-      textInput(''),
-    )
+    const pField = fieldRow(t().elicitPLabel, textInput(''))
     const pInput = pField.querySelector('input') as HTMLInputElement
-    pInput.placeholder = '0 < p < 1 (p = 0.5 → riskneutral)'
+    pInput.placeholder = t().elicitPPlaceholder
 
     // Method 2 — reference amount W.
-    const wField = fieldRow('Referensbelopp W (γ ≈ 0.96 / W)', textInput(''))
+    const wField = fieldRow(t().elicitWLabel, textInput(''))
     const wInput = wField.querySelector('input') as HTMLInputElement
-    wInput.placeholder = 'W > 0'
+    wInput.placeholder = t().elicitWPlaceholder
 
     body.append(pField, wField)
 
@@ -1884,11 +1847,12 @@ export function createApp(
         }
         const r = riskOddsFromGamma(computedGamma)
         const attitude =
-          computedGamma > 1e-9 ? 'riskavert' : computedGamma < -1e-9 ? 'risksökande' : 'riskneutral'
-        result.textContent = `γ = ${fmt(computedGamma)} · riskodds r = ${fmt(r)} · ${attitude}`
-        preview.textContent =
-          `Exempel: en 50/50-chansning om 100 är värd CE = ${fmt(exampleCe(computedGamma, 100))}; ` +
-          `om 10 → CE = ${fmt(exampleCe(computedGamma, 10))}.`
+          computedGamma > 1e-9 ? t().riskAverse : computedGamma < -1e-9 ? t().riskSeeking : t().riskNeutral
+        result.textContent = t().elicitResult(fmt(computedGamma), fmt(r), attitude)
+        preview.textContent = t().elicitExample(
+          fmt(exampleCe(computedGamma, 100)),
+          fmt(exampleCe(computedGamma, 10)),
+        )
       } catch (err) {
         result.textContent = err instanceof Error ? err.message : String(err)
         preview.textContent = ''
@@ -1906,13 +1870,13 @@ export function createApp(
     syncMethod()
 
     footer.append(
-      dialogButton('Avbryt', closeDialog),
+      dialogButton(t().cancel, closeDialog),
       dialogButton(
-        'Använd γ',
+        t().useGamma,
         () =>
           guarded(() => {
             if (!Number.isFinite(computedGamma)) {
-              throw new Error('Ange ett giltigt värde först.')
+              throw new Error(t().enterValidValue)
             }
             // Elicitation always produces an exponential utility.
             state.utilityFn = { type: 'exponential', parameter: computedGamma }
@@ -1925,10 +1889,37 @@ export function createApp(
     )
   }
 
+  /** Re-applies every STATIC element's text from the active language dictionary.
+   * Static elements are built once, so a language switch must re-label them here
+   * (dynamic elements — dialogs, menus, messages, bars — read t() when built).
+   * Called each render(), so it also reflects a mid-session language change. */
+  const syncStaticLabels = (): void => {
+    const d = t()
+    titleField.textContent = d.titleField
+    addBtn.textContent = d.addNode
+    flipBtn.title = d.flipTitle
+    undoBtn.title = d.undoTitle
+    redoBtn.title = d.redoTitle
+    saveBtn.textContent = d.save
+    saveBtn.title = d.saveTitle
+    loadBtn.textContent = d.load
+    utilityLabel.textContent = d.utilityFunction
+    utilityLinearOpt.textContent = d.utilityLinear
+    utilityExpOpt.textContent = d.utilityExponential
+    elicitBtn.textContent = d.setRiskAttitude
+    rightDeviation.textContent = d.deviationBadge
+    rightDeviation.title = d.deviationTitle
+    vocHint.textContent = d.vocHint
+    langToggle.title = d.langTitle
+    const lang = getLang()
+    langSv.classList.toggle('active', lang === 'sv')
+    langEn.classList.toggle('active', lang === 'en')
+  }
+
   /** Reflects display-mode/utility state into the top-bar controls. Built
    * once, updated every render — no listener churn. */
   const syncModeControls = (): void => {
-    modeBtn.textContent = state.displayMode === 'eu' ? 'Läge: EU/CE' : 'Läge: EV'
+    modeBtn.textContent = state.displayMode === 'eu' ? t().modeEuCe : t().modeEv
     utilityBar.style.display = state.displayMode === 'eu' ? '' : 'none'
     if (state.displayMode !== 'eu') {
       utilityErrorEl.style.display = 'none'
@@ -1943,7 +1934,7 @@ export function createApp(
         paramInput.value = String(parseFloat(state.utilityFn.parameter.toPrecision(6)))
       }
       const r = riskOddsFromGamma(state.utilityFn.parameter)
-      riskReadout.textContent = `(riskodds r = ${fmt(r)})`
+      riskReadout.textContent = t().riskOdds(fmt(r))
     } else {
       riskReadout.textContent = ''
     }
@@ -1985,7 +1976,7 @@ export function createApp(
    * it has been hand-edited, and computes VOC = |value(left) − value(right)|
    * (direction-agnostic; a free comparison once the right tree deviates). */
   const renderRightPane = (): void => {
-    flipBtn.textContent = state.split ? '⇄ Sammanfoga' : '⇄ Flip'
+    flipBtn.textContent = state.split ? t().merge : t().flip
     rightPane.style.display = state.split ? '' : 'none'
     vocBar.style.display = state.split ? '' : 'none'
     vocHint.style.display = state.split ? '' : 'none'
@@ -1996,9 +1987,7 @@ export function createApp(
     }
 
     rightDeviation.style.display = state.rightEdited ? '' : 'none'
-    rightCaption.textContent = state.rightEdited
-      ? 'Omvänt träd — fri jämförelse'
-      : 'Omvänt träd (klarsyn) — redigerbart'
+    rightCaption.textContent = state.rightEdited ? t().reversedEditedCaption : t().reversedCaption
 
     const vocLabel = state.displayMode === 'eu' ? 'VOC (CE)' : 'VOC'
     const valLabel = state.displayMode === 'eu' ? 'CE' : 'EV'
@@ -2017,9 +2006,7 @@ export function createApp(
     if (!state.rightRoot) {
       rightHost.replaceChildren()
       svgRight = null
-      vocBar.textContent = state.root
-        ? `${vocLabel} = –`
-        : `${vocLabel} = – · bygg ett träd (Lägg till nod) för att räkna ut klarsynens värde`
+      vocBar.textContent = state.root ? `${vocLabel} = –` : t().vocEmptyHint(vocLabel)
       return
     }
 
@@ -2044,11 +2031,15 @@ export function createApp(
     const left = treeValue(state.root)
     const right = treeValue(state.rightRoot)
     if (!Number.isFinite(left) || !Number.isFinite(right)) {
-      vocBar.textContent = `${vocLabel} = – · fyll i alla sannolikheter och utfallsvärden`
+      vocBar.textContent = t().vocIncomplete(vocLabel)
     } else {
-      vocBar.textContent =
-        `${valLabel} vänster = ${fmt(left)} · ${valLabel} höger = ${fmt(right)} · ` +
-        `${vocLabel} = ${fmt(Math.abs(left - right))}`
+      vocBar.textContent = t().vocRow(
+        valLabel,
+        vocLabel,
+        fmt(left),
+        fmt(right),
+        fmt(Math.abs(left - right)),
+      )
     }
   }
 
@@ -2061,7 +2052,7 @@ export function createApp(
     }
     const node = state.selected
     const trace = traceNode(node, historyFor(node), state.displayMode, state.utilityFn)
-    traceBar.textContent = `Beräkning (${displayName(node)}): ${trace.text}`
+    traceBar.textContent = t().calculation(displayName(node), trace.text)
     traceBar.style.display = ''
   }
 
@@ -2084,6 +2075,7 @@ export function createApp(
         render()
       },
     })
+    syncStaticLabels()
     syncModeControls()
     renderRightPane()
     renderPillBar(leftPillBar, state.root)
