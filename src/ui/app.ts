@@ -166,9 +166,17 @@ export function createApp(
 
   const topbar = document.createElement('header')
   topbar.className = 'topbar'
+  // Drafting title-block: a small mono field-label over the serif name, in its
+  // own ruled cell (a vertical rule divides it from the tools).
+  const titleBlock = document.createElement('div')
+  titleBlock.className = 'title-block'
+  const titleField = document.createElement('span')
+  titleField.className = 'title-field-label'
+  titleField.textContent = 'BESLUTSTRÄD'
   const title = document.createElement('span')
   title.className = 'app-title'
   title.textContent = 'DecisionAnalysis'
+  titleBlock.append(titleField, title)
   const addBtn = document.createElement('button')
   addBtn.id = 'add-node'
   addBtn.textContent = 'Lägg till nod'
@@ -190,16 +198,38 @@ export function createApp(
   modeBtn.id = 'mode-toggle'
   const saveBtn = document.createElement('button')
   saveBtn.id = 'save'
-  saveBtn.textContent = '💾 Spara ▾'
+  saveBtn.textContent = 'Spara ▾'
   saveBtn.title = 'Spara som fil (JSON) eller som PNG-bild'
   const loadBtn = document.createElement('button')
   loadBtn.id = 'load'
-  loadBtn.textContent = '📂 Ladda'
+  loadBtn.textContent = 'Ladda'
   const fileInput = document.createElement('input')
   fileInput.type = 'file'
   fileInput.accept = 'application/json,.json'
   fileInput.style.display = 'none'
-  topbar.append(title, addBtn, flipBtn, undoBtn, redoBtn, modeBtn, saveBtn, loadBtn, fileInput)
+  // Tools grouped with hairline rules (title-block ruled feel).
+  const toolSep = (): HTMLElement => {
+    const s = document.createElement('span')
+    s.className = 'tool-sep'
+    return s
+  }
+  const tools = document.createElement('div')
+  tools.className = 'topbar-tools'
+  tools.append(
+    addBtn,
+    toolSep(),
+    flipBtn,
+    toolSep(),
+    undoBtn,
+    redoBtn,
+    toolSep(),
+    modeBtn,
+    toolSep(),
+    saveBtn,
+    loadBtn,
+    fileInput,
+  )
+  topbar.append(titleBlock, tools)
 
   const messageStrip = document.createElement('div')
   messageStrip.className = 'message-strip'
@@ -1737,8 +1767,8 @@ export function createApp(
     menu.style.left = `${brect.left - crect.left}px`
     menu.style.top = `${brect.bottom - crect.top + 2}px`
     menu.append(
-      menuItem('💾 Spara som fil', saveAsFile),
-      menuItem('🖼 Spara som PNG', saveAsPng),
+      menuItem('Spara som fil', saveAsFile),
+      menuItem('Spara som PNG', saveAsPng),
     )
     menuLayer.appendChild(menu)
   }

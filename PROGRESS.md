@@ -4,6 +4,23 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-04 (segment 27) — Toppmeny som rit-titelblock + pill-former matchar noderna
+
+**Vad hände:** Användaren tyckte toppmenyn inte följde rit-estetiken, och att pillarna hade lite annan form än noderna. Ställde tre designfrågor (svar: **lätta hairline-knappar**, **monokrom/text — bort med emoji**, **rit-titelblock**) och ritade om därefter.
+
+**Toppmeny (`app.ts` + `style.css`):**
+- **Rit-titelblock:** toppremsan är nu en ruled strip — appnamnet sitter i en egen bordad cell (`.title-block`) med en liten mono versal fält-etikett ("BESLUTSTRÄD") över serif-namnet, avdelad med en vertikal bläcklinje från verktygen. Verktygen ligger i `.topbar-tools` grupperade med hårfina vertikala avdelare (`.tool-sep`, `--faint`): Skapa │ Flip │ ↶ ↷ │ Läge │ Spara Ladda.
+- **Lätta hairline-knappar:** global `button` fick `--muted`-ram (var `--ink`) och **mjuk paperton-hover** (`--faint`-bakgrund) i stället för full svart invert — matchar menyval-hovern och rit-temats delikatess. Primärknappen (accent) oförändrad som emfas.
+- **Monokrom:** emoji borttagna (💾/📂/🖼) — "Spara ▾", "Ladda", och dropdown-valen "Spara som fil"/"Spara som PNG" är nu ren text. De monokroma Unicode-glyferna (↶ ↷ ⇄ ▾) behålls (de är redan i bläck-ton, inte emoji).
+
+**Pill-former (`style.css`):** pillarna echo:ar nu nodformerna troget — chans-pill `border-radius: 999px` (stadium/ellips-känsla, matchar nodens **ellips**), beslut-pill `3px` (matchar nodens `rect rx=3`), och ram i `--ink` (samma hårfina bläck som node-outlines, var `--muted`).
+
+**Verifiering:** 255 gröna (rena CSS/DOM-tillägg, inga klassnamn som tester låser). `tsc` + build rena. **Live-verifierat** (computed styles, skärmdumpar komponerar inte): titelblock med fält-etikett + serif-namn + vertikal bläcklinje, 4 tool-avdelare (`--faint`), knappram `--muted` + paper-bg, inga emoji kvar, chans-pill 999px/bläck-ram, beslut-pill 3px. Inga konsolfel.
+
+**Judgment call:** hairline-hovern applicerades **globalt** på `button` (inte bara toppbaren) så dialog- och menyknappar blir konsekventa med samma delikata känsla — annars hade toppbaren matchat resten men dialogerna stuckit ut i stället.
+
+---
+
 ## 2026-08-04 (segment 26) — Spara-dropdown (fil / PNG under en knapp)
 
 **Vad hände:** Användarönskemål: slå ihop de två separata knapparna (💾 Spara + 🖼 PNG) till **en** "Spara"-dropdown med två val, i linje med appens estetik. Bara spara-ikonen kvar (PNG-ikonen borttagen från topbaren).

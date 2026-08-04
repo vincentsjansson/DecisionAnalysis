@@ -64,14 +64,33 @@ body {
 }
 
 /* ── Fixed top bar: outside the SVG, unaffected by zoom/pan ── */
+/* ── Top bar as a drafting title-block ──
+   A ruled strip: the app name sits in its own bordered cell (like a drawing's
+   title-block field), divided by a vertical rule from the ruled tool groups. */
 .topbar {
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 16px;
+  align-items: stretch;
   border-bottom: 1px solid var(--ink);
   background: var(--paper);
+}
+
+.title-block {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 6px 16px;
+  border-right: 1px solid var(--ink);
+}
+
+.title-field-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  line-height: 1;
 }
 
 .app-title {
@@ -79,13 +98,32 @@ body {
   font-size: 17px;
   font-weight: 600;
   letter-spacing: 0.02em;
+  line-height: 1.1;
+}
+
+.topbar-tools {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+}
+
+/* Hairline vertical rule separating tool groups (title-block ruling). */
+.tool-sep {
+  align-self: stretch;
+  width: 1px;
+  min-height: 20px;
+  background: var(--faint);
+  margin: 0 2px;
 }
 
 button {
   font: inherit;
   color: var(--ink);
   background: var(--paper);
-  border: 1px solid var(--ink);
+  border: 1px solid var(--muted);
   border-radius: 3px;
   padding: 5px 12px;
   cursor: pointer;
@@ -93,9 +131,12 @@ button {
     border-color var(--motion-fast);
 }
 
+/* Soft paper-toned hover (not a full ink invert) — keeps the hairline drafting
+   feel; the border firms up to ink to mark focus of interaction. */
 button:hover {
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--faint);
+  color: var(--ink);
+  border-color: var(--ink);
 }
 
 button:disabled {
@@ -106,6 +147,7 @@ button:disabled {
 button:disabled:hover {
   background: var(--paper);
   color: var(--ink);
+  border-color: var(--muted);
 }
 
 /* Undo/redo: compact, monochrome glyph buttons in the top bar. */
@@ -213,10 +255,11 @@ button.primary:hover {
 .pill {
   font-family: var(--font-heading);
   font-size: 12px;
-  padding: 2px 9px;
+  padding: 2px 11px;
   background: var(--paper);
   color: var(--ink);
-  border: 1px solid var(--muted);
+  /* Echo the node outlines: same ink hairline as the tree shapes. */
+  border: 1px solid var(--ink);
   cursor: pointer;
   transition: border-color var(--motion-fast), color var(--motion-fast);
 }
@@ -225,13 +268,14 @@ button.primary:hover {
   cursor: grab;
 }
 
-/* Node shapes echoed: rounded = chance (ellipse), squared = decision (rect). */
+/* Node shapes echoed faithfully: chance is an ELLIPSE -> fully-rounded stadium
+   ends; decision is a rect with rx=3 -> the same 3px corner. */
 .pill-chance {
-  border-radius: 11px;
+  border-radius: 999px;
 }
 
 .pill-decision {
-  border-radius: 2px;
+  border-radius: 3px;
 }
 
 .pill.selected {
