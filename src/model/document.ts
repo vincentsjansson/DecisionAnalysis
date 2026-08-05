@@ -3,6 +3,7 @@ import type { SerializedConditionalRow, SerializedOutcome, SerializedTreeNode } 
 import type { NodeType, TreeNode } from './tree'
 import type { UtilityFunction, UtilityType } from './utility'
 import { allNodes } from './variable'
+import { t } from '../i18n'
 
 export type DocumentDisplayMode = 'ev' | 'eu'
 
@@ -134,8 +135,13 @@ function validateVariableGroups(root: TreeNode): void {
     }
     if (primary.label !== node.label || primary.nodeType !== node.nodeType) {
       throw new DocumentError(
-        `Trasig variabelgrupp "${node.variableId}": instanserna har olika namn/typ ` +
-          `("${primary.label}"/${primary.nodeType} vs "${node.label}"/${node.nodeType}).`,
+        t().docBrokenGroup(
+          node.variableId,
+          primary.label,
+          primary.nodeType,
+          node.label,
+          node.nodeType,
+        ),
       )
     }
   }
@@ -161,22 +167,20 @@ export function deserializeDocument(text: string): DecisionDocument {
   try {
     raw = JSON.parse(text)
   } catch {
-    throw new DocumentError('Filen är inte giltig JSON.')
+    throw new DocumentError(t().docInvalidJson)
   }
-  if (!isObject(raw)) throw new DocumentError('Filen innehåller inte ett dokument-objekt.')
+  if (!isObject(raw)) throw new DocumentError(t().docNotDocObject)
   if (raw.format !== DOCUMENT_FORMAT) {
-    throw new DocumentError(
-      'Okänt filformat — den här filen skapades inte av DecisionAnalysis (saknar rätt "format").',
-    )
+    throw new DocumentError(t().docUnknownFormat)
   }
   if (raw.display_mode !== 'ev' && raw.display_mode !== 'eu') {
-    throw new DocumentError('"display_mode" måste vara "ev" eller "eu".')
+    throw new DocumentError(t().docDisplayMode)
   }
   if (!isObject(raw.utility) || (raw.utility.type !== 'linear' && raw.utility.type !== 'exponential')) {
-    throw new DocumentError('"utility.type" måste vara "linear" eller "exponential".')
+    throw new DocumentError(t().docUtilityType)
   }
   if (typeof raw.utility.parameter !== 'number') {
-    throw new DocumentError('"utility.parameter" måste vara ett tal.')
+    throw new DocumentError(t().docUtilityParam)
   }
   const savedCounter = typeof raw.id_counter === 'number' ? raw.id_counter : 0
 
@@ -193,10 +197,10 @@ export function deserializeDocument(text: string): DecisionDocument {
     validateVariableGroups(rightTree)
   }
   if (raw.right_edited !== undefined && typeof raw.right_edited !== 'boolean') {
-    throw new DocumentError('"right_edited" måste vara true eller false.')
+    throw new DocumentError(t().docRightEdited)
   }
   if (raw.split !== undefined && typeof raw.split !== 'boolean') {
-    throw new DocumentError('"split" måste vara true eller false.')
+    throw new DocumentError(t().docSplit)
   }
 
   return {

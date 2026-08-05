@@ -1,3 +1,5 @@
+import { t } from '../i18n'
+
 export type UtilityType = 'linear' | 'exponential'
 
 /** A parametrized utility function, matching the course's u-curve forms.
@@ -62,9 +64,7 @@ export function applyInverseUtility(utility: number, fn: UtilityFunction): numbe
       if (gamma === 0) return utility
       const arg = 1 - gamma * utility
       if (Number.isFinite(arg) && arg <= 0) {
-        throw new UtilityDomainError(
-          `Exponential inverse undefined: 1 − γ·u = ${arg} must be > 0 (γ = ${gamma}, u = ${utility}).`,
-        )
+        throw new UtilityDomainError(t().utilExpInverse(arg, gamma, utility))
       }
       return -Math.log(arg) / gamma
     }
@@ -81,9 +81,7 @@ export function applyInverseUtility(utility: number, fn: UtilityFunction): numbe
  * (risk-neutral). */
 export function gammaFromIndifference(p: number): number {
   if (!(p > 0 && p < 1)) {
-    throw new UtilityDomainError(
-      `Indifferenssannolikheten p måste ligga i (0, 1), fick ${p}.`,
-    )
+    throw new UtilityDomainError(t().utilIndifferenceP(p))
   }
   return Math.log(p / (1 - p))
 }
@@ -93,7 +91,7 @@ export function gammaFromIndifference(p: number): number {
  * +W vs −W/2 against 0), the course's closed form is γ ≈ 0.96 / W. */
 export function gammaFromReferenceAmount(W: number): number {
   if (!(W > 0)) {
-    throw new UtilityDomainError(`Referensbeloppet W måste vara > 0, fick ${W}.`)
+    throw new UtilityDomainError(t().utilReferenceW(W))
   }
   return 0.96 / W
 }

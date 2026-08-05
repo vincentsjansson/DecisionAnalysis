@@ -2,6 +2,7 @@ import type { NodeType, TreeNode as TreeNodeType } from './tree'
 import { addOutcome, branchLabel, displayName, setChild, TreeNode } from './tree'
 import { resolveProbability } from './conditionalProbability'
 import { calculateExpectedValue } from './expectedValue'
+import { t } from '../i18n'
 
 export class FlipError extends Error {
   constructor(message: string) {
@@ -54,10 +55,6 @@ interface Collected {
 const DIST_EPSILON = 1e-9
 const VOC_EPSILON = 1e-9
 
-/** Node type in Swedish, for user-facing flip error messages. */
-function typeSv(t: NodeType): string {
-  return t === 'chance' ? 'slumpnod' : 'beslutsnod'
-}
 
 function fmtP(p: number): string {
   return Number.isFinite(p) ? String(parseFloat(p.toPrecision(4))) : '–'
@@ -96,7 +93,7 @@ export function ensureVocInvariant(voc: number): number {
  * Throws `FlipError` with a specific message on any violation. */
 function collectCanonical(root: TreeNodeType): Collected {
   if (root.outcomes.length === 0) {
-    throw new FlipError('Kan inte vända: trädet har inga utfall än.')
+    throw new FlipError(t().flipNoOutcomes)
   }
 
   const canonical: CanonicalVar[] = []
@@ -119,10 +116,7 @@ function collectCanonical(root: TreeNodeType): Collected {
     if (!existing) {
       for (let i = 0; i < depth; i++) {
         if (canonical[i].variableId === node.variableId) {
-          throw new FlipError(
-            `Kan inte vända: variabeln "${displayName(node)}" förekommer på två olika nivåer ` +
-              `(nivå ${i + 1} och nivå ${depth + 1} via ${where}). En variabel kan inte förekomma två gånger på samma väg.`,
-          )
+          throw new FlipError(t().flipVarTwoLevels(displayName(node), i + 1, depth + 1, where))
         }
       }
       canonical[depth] = {
@@ -134,23 +128,24 @@ function collectCanonical(root: TreeNodeType): Collected {
     } else {
       if (existing.variableId !== node.variableId || existing.nodeType !== node.nodeType) {
         throw new FlipError(
-          `Kan inte vända: på nivå ${depth + 1} har en gren ${typeSv(existing.nodeType)} ` +
-            `"${existing.displayLabel}" men grenen via ${where} har ${typeSv(node.nodeType)} ` +
-            `"${displayName(node)}". Alla vägar måste passera samma variabler i samma ordning. ` +
-            `(Två noder med samma namn behandlas som samma variabel bara när de är länkade.)`,
+          t().flipLevelMismatch(
+            depth + 1,
+            t().nodeTypeWord(existing.nodeType),
+            existing.displayLabel,
+            where,
+            t().nodeTypeWord(node.nodeType),
+            displayName(node),
+          ),
         )
       }
       const expected = [...existing.outcomeLabels].sort().join(', ')
       const got = node.outcomes.map((o) => o.label).sort().join(', ')
       if (expected !== got) {
-        throw new FlipError(
-          `Kan inte vända: variabeln "${displayName(node)}" har utfallen {${got}} via ${where} ` +
-            `men {${expected}} någon annanstans — samma variabel måste ha samma utfall överallt.`,
-        )
+        throw new FlipError(t().flipDiffOutcomes(displayName(node), got, where, expected))
       }
     }
     if (node.outcomes.length === 0) {
-      throw new FlipError(`Kan inte vända: noden "${displayName(node)}" (via ${where}) har inga utfall.`)
+      throw new FlipError(t().flipNodeNoOutcomes(displayName(node), where))
     }
 
     if (node.nodeType === 'chance') {
@@ -162,10 +157,7 @@ function collectCanonical(root: TreeNodeType): Collected {
         sum += p
       }
       if (Number.isFinite(sum) && Math.abs(sum - 1) > 1e-6) {
-        throw new FlipError(
-          `Kan inte vända: sannolikheterna för "${displayName(node)}" (via ${where}) summerar till ` +
-            `${fmtP(sum)}, förväntat 1 — rätta dem innan du vänder.`,
-        )
+        throw new FlipError(t().flipSumNotOne(displayName(node), where, fmtP(sum)))
       }
 
       const prev = distGroups.get(node.variableId)
@@ -175,11 +167,13 @@ function collectCanonical(root: TreeNodeType): Collected {
           const equal = (Number.isNaN(p) && Number.isNaN(q)) || Math.abs(p - q) <= DIST_EPSILON
           if (!equal) {
             throw new FlipError(
-              `Kan inte vända: "${displayName(node)}" har olika sannolikheter beroende på kontext — ` +
-                `via ${distDesc.get(node.variableId)}: ${fmtDist(prev)}, men via ${where}: ${fmtDist(dist)}. ` +
-                `En fullständig sekvensvändning kräver att varje nod har SAMMA sannolikheter ` +
-                `överallt, eftersom förfadern som villkoret beror på kan hamna efter noden i den ` +
-                `vända ordningen — ta bort villkorstabellen eller gör sannolikheterna kontextoberoende.`,
+              t().flipDiffContext(
+                displayName(node),
+                distDesc.get(node.variableId)!,
+                fmtDist(prev),
+                where,
+                fmtDist(dist),
+              ),
             )
           }
         }
@@ -294,7 +288,7 @@ function buildFromOrder(
 
   const built = build(new Map(), 0)
   if (built.kind === 'terminal') {
-    throw new FlipError('Kan inte vända: trädet har inga variabler att ordna om.')
+    throw new FlipError(t().flipNoVars)
   }
   return built.node
 }
@@ -354,14 +348,11 @@ export function reorderAdjacentLevels(
   nid: () => string,
 ): TreeNodeType {
   if (anyConditionalTable(root)) {
-    throw new FlipError(
-      'Kan inte byta ordning: trädet har en villkorstabell. En villkorstabell låser ' +
-        'nodens position (dess sannolikheter beror på kontexten) — ta bort den för att ordna om.',
-    )
+    throw new FlipError(t().flipReorderTable)
   }
   const c = collectCanonical(root)
   if (upperDepth < 0 || upperDepth + 1 >= c.canonical.length) {
-    throw new FlipError('Kan inte byta ordning: ingen grannivå att byta med.')
+    throw new FlipError(t().flipReorderNoNeighbour)
   }
   const order = c.canonical.slice()
   ;[order[upperDepth], order[upperDepth + 1]] = [order[upperDepth + 1], order[upperDepth]]

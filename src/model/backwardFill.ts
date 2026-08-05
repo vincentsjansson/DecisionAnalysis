@@ -1,6 +1,7 @@
 import type { Outcome, TreeNode } from './tree'
 import { branchLabel } from './tree'
 import { matchRow, resolveProbability } from './conditionalProbability'
+import { t } from '../i18n'
 
 export class BackwardFillError extends Error {
   constructor(message: string) {
@@ -55,23 +56,17 @@ export function backwardFill(
   targetProbability: number,
 ): BackwardFillResult {
   if (!(targetProbability > 0 && targetProbability <= 1)) {
-    throw new BackwardFillError(
-      `Target joint probability must be in (0, 1], got ${targetProbability}`,
-    )
+    throw new BackwardFillError(t().bfTargetRange(targetProbability))
   }
   if (targetNode.outcomes.indexOf(targetEdge) === -1) {
-    throw new BackwardFillError(
-      `Outcome "${targetEdge.label}" does not belong to node "${targetNode.id}"`,
-    )
+    throw new BackwardFillError(t().bfOutcomeNotBelong(targetEdge.label, targetNode.id))
   }
 
   // Climb parent pointers to establish the root -> targetNode chain.
   const chain: TreeNode[] = []
   for (let n: TreeNode | null = targetNode; n !== null; n = n.parent) chain.unshift(n)
   if (chain[0] !== root) {
-    throw new BackwardFillError(
-      `Node "${targetNode.id}" is not part of the tree rooted at "${root.id}"`,
-    )
+    throw new BackwardFillError(t().bfNotInTree(targetNode.id, root.id))
   }
 
   // Walk forward, resolving each step's effective probability with the
@@ -86,9 +81,7 @@ export function backwardFill(
         ? node.outcomes.find((o) => o.child === chain[i + 1])
         : targetEdge
     if (!edge) {
-      throw new BackwardFillError(
-        `No outcome from "${node.id}" to "${chain[i + 1].id}" — tree links are inconsistent`,
-      )
+      throw new BackwardFillError(t().bfInconsistentLinks(node.id, chain[i + 1].id))
     }
 
     const isChance = node.nodeType === 'chance'
@@ -150,9 +143,5 @@ export function backwardFill(
     }
   }
 
-  throw new BackwardFillError(
-    `No valid single-outcome adjustment along the path to "${targetEdge.label}" can reach ` +
-      `joint probability ${targetProbability}. Upstream probabilities are fixed, zero, ` +
-      `unset, or governed by conditional rows.`,
-  )
+  throw new BackwardFillError(t().bfUnreachable(targetEdge.label, targetProbability))
 }

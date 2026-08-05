@@ -161,7 +161,7 @@ describe('createApp', () => {
     } catch (e) {
       app.state.message = (e as Error).message
     }
-    expect(app.state.message).toContain('No valid single-outcome adjustment')
+    expect(app.state.message).toContain('Ingen giltig enkelutfalls-justering')
     void container
   })
 

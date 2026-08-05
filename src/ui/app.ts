@@ -1681,6 +1681,10 @@ export function createApp(
       if (l !== getLang()) {
         setLang(l)
         closeMenu()
+        // A cached flip-error string was formatted in the old language; re-derive
+        // it in the new one. Safe: a flip error means there is no right tree, so
+        // regenerating discards nothing (a valid right tree is left untouched).
+        if (state.flipError) regenerateRight()
         render()
       }
     })

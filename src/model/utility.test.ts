@@ -55,7 +55,7 @@ describe('applyInverseUtility — domain error', () => {
   it('exponential inverse rejects 1 − γ·u ≤ 0', () => {
     // γ = 0.1 -> utility bounded above by 1/γ = 10
     expect(() => applyInverseUtility(11, { type: 'exponential', parameter: 0.1 })).toThrow(
-      /must be > 0/,
+      /måste vara > 0/,
     )
   })
 })

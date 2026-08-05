@@ -8,6 +8,7 @@ import {
   setChild,
   TreeNode,
 } from './tree'
+import { t } from '../i18n'
 
 export class VariableConflictError extends Error {
   constructor(message: string) {
@@ -67,8 +68,7 @@ export function createLinkedNode(
 
   if (existing.nodeType !== nodeType) {
     throw new VariableConflictError(
-      `Kan inte länka till variabeln "${name}": den är en ${typeLabel(existing.nodeType)}, ` +
-        `men du försöker skapa en ${typeLabel(nodeType)}. En variabels alla instanser måste ha samma typ.`,
+      t().varConflictType(name, t().nodeTypeWord(existing.nodeType), t().nodeTypeWord(nodeType)),
     )
   }
 
@@ -80,10 +80,6 @@ export function createLinkedNode(
     addOutcome(node, edge.label)
   }
   return node
-}
-
-function typeLabel(t: NodeType): string {
-  return t === 'chance' ? 'slumpnod' : 'beslutsnod'
 }
 
 /** After a child is attached under one of `parent`'s outcomes, proactively
@@ -242,13 +238,10 @@ export function renameOutcomeInGroup(
   // Validate up front on every instance so we never half-apply.
   for (const instance of group) {
     if (instance.outcomes.some((o) => o.label === newLabel)) {
-      throw new Error(
-        `Instansen "${displayName(instance)}" har redan ett utfall "${newLabel}" — ` +
-          `utfallsetiketter måste vara unika.`,
-      )
+      throw new Error(t().varOutcomeExists(displayName(instance), newLabel))
     }
     if (!instance.outcomes.some((o) => o.label === oldLabel)) {
-      throw new Error(`Instansen "${displayName(instance)}" saknar utfallet "${oldLabel}".`)
+      throw new Error(t().varOutcomeMissing(displayName(instance), oldLabel))
     }
   }
 
@@ -265,10 +258,7 @@ export function renameVariable(root: TreeNode, node: TreeNode, newName: string):
   if (node.label === newName) return
   const clash = allNodes(root).find((n) => n.label === newName && n.variableId !== node.variableId)
   if (clash) {
-    throw new VariableConflictError(
-      `Namnet "${newName}" används redan av en annan variabel. Välj ett annat namn ` +
-        `(eller länka genom att skapa en ny nod med det namnet).`,
-    )
+    throw new VariableConflictError(t().varRenameClash(newName))
   }
   for (const instance of collectGroup(root, node.variableId)) {
     instance.label = newName
@@ -321,9 +311,7 @@ export function relinkByName(root: TreeNode): void {
     const type = nodes[0].nodeType
     for (const n of nodes) {
       if (n.nodeType !== type) {
-        throw new VariableConflictError(
-          `Variabeln "${name}" har blandade nodtyper — alla instanser måste ha samma typ.`,
-        )
+        throw new VariableConflictError(t().varMixedTypes(name))
       }
     }
     const variableId = nodes[0].id

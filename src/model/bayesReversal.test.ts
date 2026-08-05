@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { ensureVocInvariant, FlipError, reverseTreeWithBayes } from './bayesReversal'
 import { calculateExpectedValue } from './expectedValue'
 import { addOutcome, setChild, TreeNode } from './tree'
 import { relinkByName } from './variable'
+import { setLang } from '../i18n'
 
 /** Real usage links same-named nodes at creation time (createLinkedNode).
  * These tests build trees with raw `new TreeNode`, so normalize groups from
@@ -388,5 +389,19 @@ describe('reverseTreeWithBayes — edge cases and invariants', () => {
       expect(r.flippedEv).toBeCloseTo(5)
       expect(r.voc).toBeCloseTo(5 - 7.5)
     })
+  })
+})
+
+describe('FlipError messages follow the active language', () => {
+  afterEach(() => setLang('sv')) // restore default so other model tests stay Swedish
+
+  it('translates the flip error to English / Swedish', () => {
+    const emptyRoot = () => new TreeNode('r', 'chance', 'R') // no outcomes -> flip throws
+
+    setLang('en')
+    expect(() => reverseTreeWithBayes(emptyRoot())).toThrow(/Cannot reverse: the tree has no outcomes/)
+
+    setLang('sv')
+    expect(() => reverseTreeWithBayes(emptyRoot())).toThrow(/Kan inte vända: trädet har inga utfall/)
   })
 })

@@ -175,6 +175,59 @@ export interface Dict {
   elicitPLabel: string
   elicitExample: (ce100: string, ce10: string) => string
   useGamma: string
+  // ── Model-layer errors (shown to the user) ──
+  nodeTypeWord: (type: 'chance' | 'decision') => string
+  flipNoOutcomes: string
+  flipVarTwoLevels: (label: string, levelA: number, levelB: number, where: string) => string
+  flipLevelMismatch: (
+    level: number,
+    existingType: string,
+    existingLabel: string,
+    where: string,
+    nodeType: string,
+    nodeLabel: string,
+  ) => string
+  flipDiffOutcomes: (label: string, got: string, where: string, expected: string) => string
+  flipNodeNoOutcomes: (label: string, where: string) => string
+  flipSumNotOne: (label: string, where: string, sum: string) => string
+  flipDiffContext: (
+    label: string,
+    prevDesc: string,
+    prevDist: string,
+    where: string,
+    dist: string,
+  ) => string
+  flipNoVars: string
+  flipReorderTable: string
+  flipReorderNoNeighbour: string
+  varConflictType: (name: string, existingType: string, newType: string) => string
+  varRenameClash: (newName: string) => string
+  varMixedTypes: (name: string) => string
+  varOutcomeExists: (instance: string, newLabel: string) => string
+  varOutcomeMissing: (instance: string, oldLabel: string) => string
+  bfTargetRange: (target: number) => string
+  bfOutcomeNotBelong: (label: string, nodeId: string) => string
+  bfNotInTree: (nodeId: string, rootId: string) => string
+  bfInconsistentLinks: (nodeId: string, nextId: string) => string
+  bfUnreachable: (label: string, target: number) => string
+  utilExpInverse: (arg: number, gamma: number, utility: number) => string
+  utilIndifferenceP: (p: number) => string
+  utilReferenceW: (W: number) => string
+  docInvalidJson: string
+  docNotDocObject: string
+  docUnknownFormat: string
+  docDisplayMode: string
+  docUtilityType: string
+  docUtilityParam: string
+  docRightEdited: string
+  docSplit: string
+  docBrokenGroup: (
+    variableId: string,
+    labelA: string,
+    typeA: string,
+    labelB: string,
+    typeB: string,
+  ) => string
 }
 
 const sv: Dict = {
@@ -333,6 +386,73 @@ const sv: Dict = {
   elicitExample: (ce100, ce10) =>
     `Exempel: en 50/50-chansning om 100 är värd CE = ${ce100}; om 10 → CE = ${ce10}.`,
   useGamma: 'Använd γ',
+  nodeTypeWord: (type) => (type === 'chance' ? 'slumpnod' : 'beslutsnod'),
+  flipNoOutcomes: 'Kan inte vända: trädet har inga utfall än.',
+  flipVarTwoLevels: (label, levelA, levelB, where) =>
+    `Kan inte vända: variabeln "${label}" förekommer på två olika nivåer ` +
+    `(nivå ${levelA} och nivå ${levelB} via ${where}). En variabel kan inte förekomma två gånger på samma väg.`,
+  flipLevelMismatch: (level, existingType, existingLabel, where, nodeType, nodeLabel) =>
+    `Kan inte vända: på nivå ${level} har en gren ${existingType} ` +
+    `"${existingLabel}" men grenen via ${where} har ${nodeType} ` +
+    `"${nodeLabel}". Alla vägar måste passera samma variabler i samma ordning. ` +
+    `(Två noder med samma namn behandlas som samma variabel bara när de är länkade.)`,
+  flipDiffOutcomes: (label, got, where, expected) =>
+    `Kan inte vända: variabeln "${label}" har utfallen {${got}} via ${where} ` +
+    `men {${expected}} någon annanstans — samma variabel måste ha samma utfall överallt.`,
+  flipNodeNoOutcomes: (label, where) =>
+    `Kan inte vända: noden "${label}" (via ${where}) har inga utfall.`,
+  flipSumNotOne: (label, where, sum) =>
+    `Kan inte vända: sannolikheterna för "${label}" (via ${where}) summerar till ` +
+    `${sum}, förväntat 1 — rätta dem innan du vänder.`,
+  flipDiffContext: (label, prevDesc, prevDist, where, dist) =>
+    `Kan inte vända: "${label}" har olika sannolikheter beroende på kontext — ` +
+    `via ${prevDesc}: ${prevDist}, men via ${where}: ${dist}. ` +
+    `En fullständig sekvensvändning kräver att varje nod har SAMMA sannolikheter ` +
+    `överallt, eftersom förfadern som villkoret beror på kan hamna efter noden i den ` +
+    `vända ordningen — ta bort villkorstabellen eller gör sannolikheterna kontextoberoende.`,
+  flipNoVars: 'Kan inte vända: trädet har inga variabler att ordna om.',
+  flipReorderTable:
+    'Kan inte byta ordning: trädet har en villkorstabell. En villkorstabell låser ' +
+    'nodens position (dess sannolikheter beror på kontexten) — ta bort den för att ordna om.',
+  flipReorderNoNeighbour: 'Kan inte byta ordning: ingen grannivå att byta med.',
+  varConflictType: (name, existingType, newType) =>
+    `Kan inte länka till variabeln "${name}": den är en ${existingType}, ` +
+    `men du försöker skapa en ${newType}. En variabels alla instanser måste ha samma typ.`,
+  varRenameClash: (newName) =>
+    `Namnet "${newName}" används redan av en annan variabel. Välj ett annat namn ` +
+    `(eller länka genom att skapa en ny nod med det namnet).`,
+  varMixedTypes: (name) =>
+    `Variabeln "${name}" har blandade nodtyper — alla instanser måste ha samma typ.`,
+  varOutcomeExists: (instance, newLabel) =>
+    `Instansen "${instance}" har redan ett utfall "${newLabel}" — ` +
+    `utfallsetiketter måste vara unika.`,
+  varOutcomeMissing: (instance, oldLabel) =>
+    `Instansen "${instance}" saknar utfallet "${oldLabel}".`,
+  bfTargetRange: (target) => `Mål-joint-sannolikheten måste ligga i (0, 1], fick ${target}`,
+  bfOutcomeNotBelong: (label, nodeId) => `Utfallet "${label}" tillhör inte noden "${nodeId}"`,
+  bfNotInTree: (nodeId, rootId) => `Noden "${nodeId}" är inte del av trädet med rot "${rootId}"`,
+  bfInconsistentLinks: (nodeId, nextId) =>
+    `Inget utfall från "${nodeId}" till "${nextId}" — trädets länkar är inkonsekventa`,
+  bfUnreachable: (label, target) =>
+    `Ingen giltig enkelutfalls-justering längs vägen till "${label}" kan nå ` +
+    `joint-sannolikheten ${target}. Uppströms sannolikheter är fasta, noll, ` +
+    `osatta eller styrda av villkorsrader.`,
+  utilExpInverse: (arg, gamma, utility) =>
+    `Exponentiell invers odefinierad: 1 − γ·u = ${arg} måste vara > 0 (γ = ${gamma}, u = ${utility}).`,
+  utilIndifferenceP: (p) => `Indifferenssannolikheten p måste ligga i (0, 1), fick ${p}.`,
+  utilReferenceW: (W) => `Referensbeloppet W måste vara > 0, fick ${W}.`,
+  docInvalidJson: 'Filen är inte giltig JSON.',
+  docNotDocObject: 'Filen innehåller inte ett dokument-objekt.',
+  docUnknownFormat:
+    'Okänt filformat — den här filen skapades inte av DecisionAnalysis (saknar rätt "format").',
+  docDisplayMode: '"display_mode" måste vara "ev" eller "eu".',
+  docUtilityType: '"utility.type" måste vara "linear" eller "exponential".',
+  docUtilityParam: '"utility.parameter" måste vara ett tal.',
+  docRightEdited: '"right_edited" måste vara true eller false.',
+  docSplit: '"split" måste vara true eller false.',
+  docBrokenGroup: (variableId, labelA, typeA, labelB, typeB) =>
+    `Trasig variabelgrupp "${variableId}": instanserna har olika namn/typ ` +
+    `("${labelA}"/${typeA} vs "${labelB}"/${typeB}).`,
 }
 
 const en: Dict = {
@@ -490,6 +610,73 @@ const en: Dict = {
   elicitExample: (ce100, ce10) =>
     `Example: a 50/50 gamble for 100 is worth CE = ${ce100}; for 10 → CE = ${ce10}.`,
   useGamma: 'Use γ',
+  nodeTypeWord: (type) => (type === 'chance' ? 'chance node' : 'decision node'),
+  flipNoOutcomes: 'Cannot reverse: the tree has no outcomes yet.',
+  flipVarTwoLevels: (label, levelA, levelB, where) =>
+    `Cannot reverse: the variable "${label}" appears at two different levels ` +
+    `(level ${levelA} and level ${levelB} via ${where}). A variable cannot appear twice on the same path.`,
+  flipLevelMismatch: (level, existingType, existingLabel, where, nodeType, nodeLabel) =>
+    `Cannot reverse: at level ${level} one branch has ${existingType} ` +
+    `"${existingLabel}" but the branch via ${where} has ${nodeType} ` +
+    `"${nodeLabel}". Every path must pass the same variables in the same order. ` +
+    `(Two nodes with the same name are treated as the same variable only when linked.)`,
+  flipDiffOutcomes: (label, got, where, expected) =>
+    `Cannot reverse: the variable "${label}" has outcomes {${got}} via ${where} ` +
+    `but {${expected}} elsewhere — the same variable must have the same outcomes everywhere.`,
+  flipNodeNoOutcomes: (label, where) =>
+    `Cannot reverse: the node "${label}" (via ${where}) has no outcomes.`,
+  flipSumNotOne: (label, where, sum) =>
+    `Cannot reverse: the probabilities for "${label}" (via ${where}) sum to ` +
+    `${sum}, expected 1 — fix them before reversing.`,
+  flipDiffContext: (label, prevDesc, prevDist, where, dist) =>
+    `Cannot reverse: "${label}" has different probabilities depending on context — ` +
+    `via ${prevDesc}: ${prevDist}, but via ${where}: ${dist}. ` +
+    `A full sequence reversal requires every node to have the SAME probabilities ` +
+    `everywhere, since the ancestor the condition depends on can end up after the node in ` +
+    `the reversed order — remove the conditional table or make the probabilities context-independent.`,
+  flipNoVars: 'Cannot reverse: the tree has no variables to reorder.',
+  flipReorderTable:
+    'Cannot reorder: the tree has a conditional table. A conditional table fixes ' +
+    'the node’s position (its probabilities depend on context) — remove it to reorder.',
+  flipReorderNoNeighbour: 'Cannot reorder: no neighbouring level to swap with.',
+  varConflictType: (name, existingType, newType) =>
+    `Cannot link to the variable "${name}": it is a ${existingType}, ` +
+    `but you are trying to create a ${newType}. All instances of a variable must have the same type.`,
+  varRenameClash: (newName) =>
+    `The name "${newName}" is already used by another variable. Choose a different name ` +
+    `(or link by creating a new node with that name).`,
+  varMixedTypes: (name) =>
+    `The variable "${name}" has mixed node types — all instances must have the same type.`,
+  varOutcomeExists: (instance, newLabel) =>
+    `The instance "${instance}" already has an outcome "${newLabel}" — ` +
+    `outcome labels must be unique.`,
+  varOutcomeMissing: (instance, oldLabel) =>
+    `The instance "${instance}" has no outcome "${oldLabel}".`,
+  bfTargetRange: (target) => `Target joint probability must be in (0, 1], got ${target}`,
+  bfOutcomeNotBelong: (label, nodeId) => `Outcome "${label}" does not belong to node "${nodeId}"`,
+  bfNotInTree: (nodeId, rootId) => `Node "${nodeId}" is not part of the tree rooted at "${rootId}"`,
+  bfInconsistentLinks: (nodeId, nextId) =>
+    `No outcome from "${nodeId}" to "${nextId}" — tree links are inconsistent`,
+  bfUnreachable: (label, target) =>
+    `No valid single-outcome adjustment along the path to "${label}" can reach ` +
+    `joint probability ${target}. Upstream probabilities are fixed, zero, ` +
+    `unset, or governed by conditional rows.`,
+  utilExpInverse: (arg, gamma, utility) =>
+    `Exponential inverse undefined: 1 − γ·u = ${arg} must be > 0 (γ = ${gamma}, u = ${utility}).`,
+  utilIndifferenceP: (p) => `The indifference probability p must be in (0, 1), got ${p}.`,
+  utilReferenceW: (W) => `The reference amount W must be > 0, got ${W}.`,
+  docInvalidJson: 'The file is not valid JSON.',
+  docNotDocObject: 'The file does not contain a document object.',
+  docUnknownFormat:
+    'Unknown file format — this file was not created by DecisionAnalysis (missing the right "format").',
+  docDisplayMode: '"display_mode" must be "ev" or "eu".',
+  docUtilityType: '"utility.type" must be "linear" or "exponential".',
+  docUtilityParam: '"utility.parameter" must be a number.',
+  docRightEdited: '"right_edited" must be true or false.',
+  docSplit: '"split" must be true or false.',
+  docBrokenGroup: (variableId, labelA, typeA, labelB, typeB) =>
+    `Corrupt variable group "${variableId}": the instances have different names/types ` +
+    `("${labelA}"/${typeA} vs "${labelB}"/${typeB}).`,
 }
 
 /** The active-language dictionary. Read it fresh at each call site (so a

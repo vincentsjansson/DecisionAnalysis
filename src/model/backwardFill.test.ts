@@ -113,6 +113,6 @@ describe('backwardFill', () => {
     const { root } = buildTree()
     const stray = new TreeNode('stray', 'chance', 'S')
     const strayEdge = addOutcome(stray, 'x', 1, 1)
-    expect(() => backwardFill(root, stray, strayEdge, 0.5)).toThrow(/not part of the tree/)
+    expect(() => backwardFill(root, stray, strayEdge, 0.5)).toThrow(/är inte del av trädet/)
   })
 })
