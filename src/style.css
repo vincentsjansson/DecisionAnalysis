@@ -337,12 +337,19 @@ button.primary:hover {
   color: var(--accent);
 }
 
-/* A level that can't be reordered (conditional table, or a non-uniform/
-   unlinked level) — shown as a fixed wall via a dashed, dimmed border. */
+/* A level that can't be reordered (a non-uniform/unlinked level) — shown as a
+   fixed wall via a dashed, dimmed border. */
 .pill.locked {
   border-style: dashed;
   color: var(--muted);
   cursor: help;
+}
+
+/* A conditional-table level: a "wall" that can still be dragged past levels it
+   doesn't depend on. Dotted underline marks it as a conditional pivot. */
+.pill.wall {
+  border-bottom-style: dotted;
+  border-bottom-width: 2px;
 }
 
 .pill-arrow {

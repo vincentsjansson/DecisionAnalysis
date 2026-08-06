@@ -81,6 +81,7 @@ export interface Dict {
   deleteWholeTree: string
   pillLockedTable: string
   pillLockedNonUniform: string
+  pillTableWall: string
   // ── Generic dialog ──
   cancel: string
   create: string
@@ -200,6 +201,7 @@ export interface Dict {
   flipNoVars: string
   flipReorderTable: string
   flipReorderNoNeighbour: string
+  flipReorderDependency: (lower: string, upper: string) => string
   varConflictType: (name: string, existingType: string, newType: string) => string
   varRenameClash: (newName: string) => string
   varMixedTypes: (name: string) => string
@@ -277,6 +279,8 @@ const sv: Dict = {
   pillLockedTable: 'Har villkorstabell — låst position, kan inte ordnas om.',
   pillLockedNonUniform:
     'Nivån är inte en enhetlig variabel (t.ex. en frikopplad instans) — kan inte ordnas om.',
+  pillTableWall:
+    'Villkorstabell — kan flyttas förbi oberoende nivåer, men inte förbi en nivå den beror på.',
   cancel: 'Avbryt',
   create: 'Skapa',
   ok: 'OK',
@@ -415,6 +419,9 @@ const sv: Dict = {
     'Kan inte byta ordning: trädet har en villkorstabell. En villkorstabell låser ' +
     'nodens position (dess sannolikheter beror på kontexten) — ta bort den för att ordna om.',
   flipReorderNoNeighbour: 'Kan inte byta ordning: ingen grannivå att byta med.',
+  flipReorderDependency: (lower, upper) =>
+    `Kan inte byta ordning: "${lower}" har en villkorstabell som beror på "${upper}" — ` +
+    `de kan inte byta plats (då hamnar "${upper}" efter något som beror på den).`,
   varConflictType: (name, existingType, newType) =>
     `Kan inte länka till variabeln "${name}": den är en ${existingType}, ` +
     `men du försöker skapa en ${newType}. En variabels alla instanser måste ha samma typ.`,
@@ -502,6 +509,8 @@ const en: Dict = {
   pillLockedTable: 'Has a conditional table — fixed position, can’t be reordered.',
   pillLockedNonUniform:
     'This level isn’t a single uniform variable (e.g. an unlinked instance) — can’t be reordered.',
+  pillTableWall:
+    'Conditional table — can move past independent levels, but not past a level it depends on.',
   cancel: 'Cancel',
   create: 'Create',
   ok: 'OK',
@@ -639,6 +648,9 @@ const en: Dict = {
     'Cannot reorder: the tree has a conditional table. A conditional table fixes ' +
     'the node’s position (its probabilities depend on context) — remove it to reorder.',
   flipReorderNoNeighbour: 'Cannot reorder: no neighbouring level to swap with.',
+  flipReorderDependency: (lower, upper) =>
+    `Cannot reorder: "${lower}" has a conditional table that depends on "${upper}" — ` +
+    `they can't swap places (that would put "${upper}" after something that depends on it).`,
   varConflictType: (name, existingType, newType) =>
     `Cannot link to the variable "${name}": it is a ${existingType}, ` +
     `but you are trying to create a ${newType}. All instances of a variable must have the same type.`,

@@ -1017,9 +1017,11 @@ export function createApp(
     barEl.style.display = ''
 
     const levels = levelSequence(root)
-    // A level is a fixed "wall" (can't be moved / crossed) when it isn't a
-    // single uniform variable or carries a conditional table.
-    const locked = (lvl: LevelInfo): boolean => !lvl.uniform || lvl.hasTable
+    // A level that isn't a single uniform variable (e.g. an unlinked instance)
+    // truly can't be reordered — hard-locked. A conditional-table level is a
+    // "wall": it stays draggable but can only pass levels it doesn't depend on
+    // (the reorder call validates and fails loud otherwise).
+    const locked = (lvl: LevelInfo): boolean => !lvl.uniform
 
     levels.forEach((lvl, i) => {
       if (i > 0) {
@@ -1033,11 +1035,14 @@ export function createApp(
       pill.className =
         `pill pill-${lvl.nodeType}` +
         (lvl.primary === state.selected ? ' selected' : '') +
-        (locked(lvl) ? ' locked' : '')
+        (locked(lvl) ? ' locked' : '') +
+        (lvl.hasTable && !locked(lvl) ? ' wall' : '')
       pill.textContent = lvl.label
       pill.dataset.pillDepth = String(lvl.depth)
       if (locked(lvl)) {
-        pill.title = lvl.hasTable ? t().pillLockedTable : t().pillLockedNonUniform
+        pill.title = t().pillLockedNonUniform
+      } else if (lvl.hasTable) {
+        pill.title = t().pillTableWall
       }
       pill.addEventListener('click', (e) => {
         e.stopPropagation() // else the container click-away closes the menu at once

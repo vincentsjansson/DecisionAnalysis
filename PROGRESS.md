@@ -4,6 +4,20 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-04 (segment 30) — Pill-drag förbi villkorsnoder (fall 2), med token-ommappning
+
+**Vad hände:** Uppföljning på segment 29. Användaren frågade om man kan flytta en nod *förbi* en villkorstabell-nod via pill-baren. Skilde på två fall och byggde fall 2. **Fall 1** (flytta en nod förbi en nivå dess tabell *beror på*) är fortsatt hårt blockerat — det skulle göra villkoret olösligt. **Fall 2** (flytta en *oberoende* nivå förbi en villkorsnod) är nu tillåtet.
+
+**Implementation (`bayesReversal.ts`):** `reorderAdjacentLevels` blockerar inte längre globalt på "någon villkorstabell finns"; i stället en riktad **beroende-check**: om den *lägre* nivåns villkorstabell refererar den *övre* nivån → `FlipError` (`flipReorderDependency`). Annars tillåts bytet, och villkorstabellen **bevaras** genom ombyggnaden: `buildFromOrder` fick en `preserveTables`-flagga som (a) tar BAS-sannolikheter från originalinstansen i stället för att baka den upplösta fördelningen, och (b) kopierar villkorstabellen med **ommappade tokens** — `remapTable` byter varje `gammalt-förfader-id:utfall` mot förfaderns nya node-id via en `pathNodes`-karta (variableId→ny nod på vägen) + en `oldIdToVar`-karta. `originalInstance` skrevs om från en strikt väg-vandring till en **DFS** som följer tilldelade förfäder strikt men utforskar otilldelade (icke-bestämmande) grenar — nödvändigt när en oberoende nivå flyttats ovanför en förfader som annars skulle behövts för att nå noden. Flip (`preserveTables=false`) opåverkat (bakar väggar som förr).
+
+**UI (`app.ts` + CSS):** pill-lås-logiken: `locked` = bara icke-uniforma nivåer (frikopplad instans, hårt låst `.locked`). Villkorsnoder är nu `.wall` (prickad understrykning) — dragbara, med tooltip "kan flyttas förbi oberoende nivåer, men inte förbi en nivå den beror på". Drop validerar via `reorderLevels`; fall 1 failar loud i meddelanderaden.
+
+**Testresultat:** 261 gröna (+1: "conditional table locks"-testet omskrivet till fall 1-block + nytt fall 2-test som verifierar att en oberoende nivå flyttas förbi OCH att tokenen ommappas till nya rot-A-id:t; båda med beslutsnods-föräldrar för att undvika auto-mirroring-artefakter). `tsc` + build rena. **Live-verifierat:** A(beslut)→B(beslut)→C(chans, tabell på A); pill-bar `[A, B, C(vägg)]`, drog C förbi B → `[A, C, B]` utan block, C behöll ⊞-badgen (tabellen överlevde). Inga konsolfel.
+
+**Judgment call:** väggar är inte längre helt låsta i pill-baren, men fall 1 blockeras per-swap (inte per-nivå) eftersom giltigheten beror på *paret* som byts, inte på nivån ensam. `.wall`-markeringen signalerar "villkorspivot" utan att lova att alla drag går.
+
+---
+
 ## 2026-08-04 (segment 29) — Segmentvis flip (villkorsnoder som brytpunkter) + multi-token-villkor
 
 **Vad hände:** Två relaterade önskemål om villkorstabeller + flip/VOC. Bekräftade båda med användaren via två frågor (segmentvis flip; multi-token-UI).

@@ -1597,30 +1597,68 @@ describe('pill sequence bar', () => {
     expect(leftPills(container)).toEqual(['B', 'A'])
   })
 
-  it('a conditional table locks the level and blocks reordering (fail loud, tree unchanged)', () => {
+  it('blocks a swap that would move a level PAST one its conditional table depends on', () => {
     const { app, container } = newApp()
-    // A (chance) x/y -> B (chance) under x with a conditional table on B.
-    const a = app.api.createRoot('chance', 'A')
-    const ex = app.api.addOutcomeTo(a, 'x', 0.5)
-    app.api.addOutcomeTo(a, 'y', 0.5)
+    // A (DECISION, so no auto-mirroring) x/y -> B (chance) with a table on A.
+    const a = app.api.createRoot('decision', 'A')
+    const ex = app.api.addOutcomeTo(a, 'x')
+    app.api.addOutcomeTo(a, 'y', NaN, 0)
     const b = app.api.attachChild(a, ex, 'chance', 'B')
     app.api.addOutcomeTo(b, 'p', 0.5, 1)
     app.api.addOutcomeTo(b, 'q', 0.5, 2)
     app.api.setConditionalTable(b, [
       { condition: new Set([`${a.id}:x`]), probabilities: { p: 0.9, q: 0.1 } },
     ])
+    expect(leftPills(container)).toEqual(['A', 'B'])
 
     const before = app.state.root
-    // Attempt to swap the two levels via a drag.
+    // Drag B (lower) above A (upper) — B's table depends on A, so this is fall 1.
     const pills = [...container.querySelectorAll('.left-pane .pill')] as HTMLElement[]
-    pills[0].dispatchEvent(new Event('dragstart', { bubbles: true }))
-    pills[1].dispatchEvent(new Event('drop', { bubbles: true }))
+    pills[1].dispatchEvent(new Event('dragstart', { bubbles: true })) // B
+    pills[0].dispatchEvent(new Event('drop', { bubbles: true })) // onto A
 
-    // Blocked: tree object unchanged, a message explains why.
+    // Blocked: tree object unchanged, a message names the dependency.
     expect(app.state.root).toBe(before)
     expect(app.state.message).toContain('villkorstabell')
-    // The table-bearing level is marked locked in the bar.
-    expect(container.querySelector('.left-pane .pill.locked')).not.toBeNull()
+    // The table level is a "wall" (draggable), not hard-locked.
+    expect(container.querySelector('.left-pane .pill.wall')).not.toBeNull()
+    expect(container.querySelector('.left-pane .pill.locked')).toBeNull()
+  })
+
+  it('allows moving an INDEPENDENT level past a conditional-table node (fall 2, table survives)', () => {
+    const { app, container } = newApp()
+    // A(decision) -> B(decision) -> C(chance, table on A). Decision parents don't
+    // auto-mirror, so every node is a clean singleton. C is independent of B, so
+    // swapping B and C is safe and C's table (which depends on A) must survive.
+    const a = app.api.createRoot('decision', 'A')
+    const ex = app.api.addOutcomeTo(a, 'x')
+    app.api.addOutcomeTo(a, 'y', NaN, 0)
+    const b = app.api.attachChild(a, ex, 'decision', 'B')
+    const eb1 = app.api.addOutcomeTo(b, 'b1')
+    app.api.addOutcomeTo(b, 'b2', NaN, 0)
+    const cNode = app.api.attachChild(b, eb1, 'chance', 'C')
+    app.api.addOutcomeTo(cNode, 'c1', 0.5, 1)
+    app.api.addOutcomeTo(cNode, 'c2', 0.5, 2)
+    app.api.setConditionalTable(cNode, [
+      { condition: new Set([`${a.id}:x`]), probabilities: { c1: 0.7, c2: 0.3 } },
+    ])
+    expect(leftPills(container)).toEqual(['A', 'B', 'C'])
+
+    // Drag C (depth 2) onto B (depth 1) — swap the two levels.
+    const pills = [...container.querySelectorAll('.left-pane .pill')] as HTMLElement[]
+    const pillB = pills.find((p) => p.textContent === 'B')!
+    const pillC = pills.find((p) => p.textContent === 'C')!
+    pillC.dispatchEvent(new Event('dragstart', { bubbles: true }))
+    pillB.dispatchEvent(new Event('drop', { bubbles: true }))
+
+    // Restructured: C moved above B.
+    expect(leftPills(container)).toEqual(['A', 'C', 'B'])
+    // C's conditional table SURVIVED, with its token re-pointed to the NEW A node.
+    const newC = allNodesIn(app.state.root!).find((n) => n.label === 'C' && n.conditionalTable.length)!
+    expect(newC.conditionalTable).toHaveLength(1)
+    const token = [...newC.conditionalTable[0].condition][0]
+    expect(app.state.root!.label).toBe('A') // root is still A
+    expect(token).toBe(`${app.state.root!.id}:x`) // remapped to the new A id, not a dangling old id
   })
 
   it('a non-adjacent drop does nothing (adjacent-only)', () => {

@@ -1,4 +1,4 @@
-import type { NodeType, TreeNode as TreeNodeType } from './tree'
+import type { ConditionalRow, NodeType, TreeNode as TreeNodeType } from './tree'
 import { addOutcome, branchLabel, displayName, setChild, TreeNode } from './tree'
 import { resolveProbability } from './conditionalProbability'
 import { calculateExpectedValue } from './expectedValue'
@@ -235,6 +235,7 @@ function buildFromOrder(
   order: CanonicalVar[],
   nid: () => string,
   preserveGroups: boolean,
+  preserveTables = false,
 ): TreeNodeType {
   const compatible = (path: PathInfo, assign: Map<string, string>): boolean => {
     for (const [key, value] of assign) {
@@ -264,32 +265,78 @@ function buildFromOrder(
     }
   }
 
-  /** Resolves a WALL chance node's distribution for the current context by
-   * walking the original tree along `assign` to the matching instance and its
-   * history, then resolving each outcome (honouring its conditional table). The
-   * segment-wise order keeps a wall's determining ancestors before it, so they
-   * are always assigned here. Returns null when the context can't be resolved
-   * (an ancestor isn't assigned) — the outcome probabilities then fall to NaN. */
+  /** Finds an original instance of `variableId` whose path is COMPATIBLE with
+   * `assign`, and the history taken to reach it. For an ancestor variable that
+   * IS assigned, only the matching outcome is followed (so a wall's determining
+   * ancestors — always assigned — pin the exact context). For an ancestor that
+   * ISN'T assigned (a non-determining level that a pill reorder moved below this
+   * one), all branches are explored to locate the variable — any instance is
+   * equivalent, since by construction this node doesn't depend on that level. */
+  const originalInstance = (
+    assign: Map<string, string>,
+    variableId: string,
+  ): { node: TreeNodeType; history: Set<string> } | null => {
+    let found: { node: TreeNodeType; history: Set<string> } | null = null
+    const dfs = (node: TreeNodeType, history: Set<string>): void => {
+      if (found) return
+      if (node.variableId === variableId) {
+        found = { node, history }
+        return
+      }
+      const assigned = assign.get(node.variableId)
+      for (const edge of node.outcomes) {
+        if (found) return
+        if (assigned !== undefined && edge.label !== assigned) continue
+        if (edge.child) dfs(edge.child, new Set(history).add(branchLabel(node, edge.label)))
+      }
+    }
+    dfs(c.root, new Set())
+    return found
+  }
+
+  /** A WALL chance node's distribution, resolved per-branch (honouring its
+   * conditional table) — used by the flip, which BAKES the resolved values (no
+   * table kept in the derived tree). */
   const resolveWallDist = (
     assign: Map<string, string>,
     variableId: string,
   ): Map<string, number> | null => {
-    let node = c.root
-    const history = new Set<string>()
-    for (;;) {
-      if (node.variableId === variableId) {
-        const dist = new Map<string, number>()
-        for (const edge of node.outcomes) dist.set(edge.label, resolveProbability(node, edge, history))
-        return dist
-      }
-      const outLabel = assign.get(node.variableId)
-      if (outLabel === undefined) return null
-      const edge = node.outcomes.find((o) => o.label === outLabel)
-      if (!edge || !edge.child) return null
-      history.add(branchLabel(node, edge.label))
-      node = edge.child
-    }
+    const inst = originalInstance(assign, variableId)
+    if (!inst) return null
+    const dist = new Map<string, number>()
+    for (const edge of inst.node.outcomes)
+      dist.set(edge.label, resolveProbability(inst.node, edge, inst.history))
+    return dist
   }
+
+  // Table preservation (in-place pill reorder): a conditional table's condition
+  // tokens are `oldAncestorId:label`. After the rebuild the ancestor is a NEW
+  // node, so remap each token to the ancestor's new node id on the current path.
+  const oldIdToVar = new Map<string, string>()
+  if (preserveTables) {
+    const walk = (n: TreeNodeType): void => {
+      oldIdToVar.set(n.id, n.variableId)
+      for (const o of n.outcomes) if (o.child) walk(o.child)
+    }
+    walk(c.root)
+  }
+  const remapTable = (
+    table: ConditionalRow[],
+    pathNodes: Map<string, TreeNodeType>,
+  ): ConditionalRow[] =>
+    table.map((row) => ({
+      condition: new Set(
+        [...row.condition].map((tok) => {
+          const sep = tok.indexOf(':')
+          const oldId = tok.slice(0, sep)
+          const label = tok.slice(sep + 1)
+          const varOfTok = oldIdToVar.get(oldId)
+          const newNode = varOfTok ? pathNodes.get(varOfTok) : undefined
+          return newNode ? `${newNode.id}:${label}` : tok
+        }),
+      ),
+      probabilities: { ...row.probabilities },
+    }))
 
   // Per-variable instance counter, so preserved groups get contiguous
   // instanceIndex values (0 = primary) for correct prime-mark display.
@@ -306,26 +353,44 @@ function buildFromOrder(
 
   type Built = { kind: 'terminal'; value: number } | { kind: 'node'; node: TreeNodeType }
 
-  const build = (assign: Map<string, string>, k: number): Built => {
+  const build = (
+    assign: Map<string, string>,
+    k: number,
+    pathNodes: Map<string, TreeNodeType>,
+  ): Built => {
     while (k < order.length && !anyCompatiblePathIncludes(assign, order[k].variableId)) k++
     if (k === order.length) return { kind: 'terminal', value: evaluate(assign) }
 
     const v = order[k]
     const node = makeNode(v)
-    // A plain chance node keeps its own context-independent distribution
-    // (copied unchanged). A WALL node's distribution is context-dependent, so
-    // resolve it per-branch from the current assignment (its ancestors are kept
-    // before it by the segment-wise order).
-    const dist =
-      v.nodeType !== 'chance'
-        ? undefined
-        : v.hasTable
-          ? resolveWallDist(assign, v.variableId) ?? undefined
-          : c.distGroups.get(v.variableId)
 
+    // Distribution + (for pill reorder) preserved conditional table.
+    let dist: Map<string, number> | undefined
+    let tableToCopy: ConditionalRow[] | undefined
+    if (v.nodeType === 'chance') {
+      if (preserveTables) {
+        // Keep the tree faithful: BASE probabilities from the original instance,
+        // and its conditional table copied with tokens re-pointed to the new
+        // ancestor ids (the ancestors are already in `pathNodes`).
+        const inst = originalInstance(assign, v.variableId)
+        if (inst) {
+          dist = new Map(inst.node.outcomes.map((o) => [o.label, o.probability]))
+          if (inst.node.conditionalTable.length > 0) {
+            tableToCopy = remapTable(inst.node.conditionalTable, pathNodes)
+          }
+        }
+      } else if (v.hasTable) {
+        dist = resolveWallDist(assign, v.variableId) ?? undefined
+      } else {
+        dist = c.distGroups.get(v.variableId)
+      }
+    }
+    if (tableToCopy) node.conditionalTable = tableToCopy
+
+    const childPath = new Map(pathNodes).set(v.variableId, node)
     for (const outLabel of v.outcomeLabels) {
       const probability = dist ? (dist.get(outLabel) ?? NaN) : NaN
-      const sub = build(new Map(assign).set(v.variableId, outLabel), k + 1)
+      const sub = build(new Map(assign).set(v.variableId, outLabel), k + 1, childPath)
       if (sub.kind === 'terminal') {
         addOutcome(node, outLabel, probability, Number.isNaN(sub.value) ? undefined : sub.value)
       } else {
@@ -336,7 +401,7 @@ function buildFromOrder(
     return { kind: 'node', node }
   }
 
-  const built = build(new Map(), 0)
+  const built = build(new Map(), 0, new Map())
   if (built.kind === 'terminal') {
     throw new FlipError(t().flipNoVars)
   }
@@ -397,39 +462,54 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
   return { flipped, voc: flippedEv - originalEv, originalEv, flippedEv }
 }
 
-function anyConditionalTable(root: TreeNodeType): boolean {
-  const walk = (n: TreeNodeType): boolean => {
-    if (n.conditionalTable.length > 0) return true
-    for (const o of n.outcomes) if (o.child && walk(o.child)) return true
-    return false
-  }
-  return walk(root)
-}
-
 /** Swaps two ADJACENT levels of the tree (`upperDepth` and `upperDepth + 1`),
- * returning a fresh restructured tree — the in-place pill-drag reorder. Unlike
- * the flip, linked groups are preserved (`preserveGroups`). Fails loud when:
- *  - the tree isn't level-consistent (the canonical validation throws — this is
- *    also what an unlinked instance trips, since it breaks a level's single-
- *    variable identity: you can't reorder past a bortkoppling); or
- *  - any node has a conditional table (the rebuild would silently flatten it,
- *    and a table pins the node's context — you can't reorder past it); or
- *  - `upperDepth` is out of range.
- * The caller supplies `nid` (the app's own id generator) so new nodes get ids
- * consistent with the rest of the tree. */
+ * returning a fresh restructured tree — the in-place pill-drag reorder. Linked
+ * groups AND conditional tables are preserved (`preserveTables`: tables are
+ * copied with their condition tokens re-pointed to the new ancestor ids).
+ *
+ * Conditional tables are allowed EXCEPT when the swap would break a dependency:
+ * the LOWER level may not move above a level its own conditional table depends
+ * on (that determining ancestor must stay before it). An independent level can
+ * freely move past a conditional-table node. Also fails loud when the tree isn't
+ * level-consistent (an unlinked instance breaks a level's single-variable
+ * identity) or `upperDepth` is out of range. */
 export function reorderAdjacentLevels(
   root: TreeNodeType,
   upperDepth: number,
   nid: () => string,
 ): TreeNodeType {
-  if (anyConditionalTable(root)) {
-    throw new FlipError(t().flipReorderTable)
-  }
   const c = collectCanonical(root)
   if (upperDepth < 0 || upperDepth + 1 >= c.canonical.length) {
     throw new FlipError(t().flipReorderNoNeighbour)
   }
+  const upper = c.canonical[upperDepth]
+  const lower = c.canonical[upperDepth + 1]
+
+  // Fall-1 block: does the LOWER level's conditional table depend on the UPPER
+  // level? If so, swapping would put the upper level after something that
+  // depends on it — refuse. (A table can only reference ancestors, i.e. higher
+  // levels, so the reverse can't happen.)
+  const oldIdToVar = new Map<string, string>()
+  const walk = (n: TreeNodeType): void => {
+    oldIdToVar.set(n.id, n.variableId)
+    for (const o of n.outcomes) if (o.child) walk(o.child)
+  }
+  walk(root)
+  const dependsOnUpper = (n: TreeNodeType): boolean =>
+    n.variableId === lower.variableId &&
+    n.conditionalTable.some((row) =>
+      [...row.condition].some((tok) => oldIdToVar.get(tok.slice(0, tok.indexOf(':'))) === upper.variableId),
+    )
+  const anyLowerDependsOnUpper = (n: TreeNodeType): boolean => {
+    if (dependsOnUpper(n)) return true
+    for (const o of n.outcomes) if (o.child && anyLowerDependsOnUpper(o.child)) return true
+    return false
+  }
+  if (anyLowerDependsOnUpper(root)) {
+    throw new FlipError(t().flipReorderDependency(lower.displayLabel, upper.displayLabel))
+  }
+
   const order = c.canonical.slice()
   ;[order[upperDepth], order[upperDepth + 1]] = [order[upperDepth + 1], order[upperDepth]]
-  return buildFromOrder(c, order, nid, true)
+  return buildFromOrder(c, order, nid, true, true)
 }
