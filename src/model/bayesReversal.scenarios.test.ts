@@ -38,15 +38,17 @@ describe('flip/VOC — scenario 2: conditional probability tables', () => {
    * distribution is CONDITIONAL on C1 (strongly correlated):
    *   P(C2 | C1=x) = p 0.9 / q 0.1 ;  P(C2 | C1=y) = p 0.1 / q 0.9.
    *
-   * Under the OLD chance-before-decision algorithm (pre-2026-08-03), this
-   * flipped correctly (VOC=1) because C1 always preceded C2 in the reversed
-   * tree, so C2's context was always already known. Under FULL sequence
-   * reversal (segment 22, 2026-08-03/04), the entire order reverses: C2
-   * (originally deepest) is now built BEFORE C1 (originally shallowest) — so
-   * C2's context-dependent distribution can no longer be resolved (its
-   * determining ancestor hasn't been chosen yet), and this now fails loud
-   * instead of silently picking a distribution. This is the correct behavior
-   * for the new algorithm — see bayesReversal.ts's doc comment.
+   * Under SEGMENT-WISE reversal (segment 29), C2 carries a conditional table so
+   * it is a WALL — a fixed pivot. The levels before it ([C1, D]) reverse to
+   * [D, C1]; C2 stays last. Reversed order: D -> C1 -> C2, with C2's distribution
+   * resolved per branch (C1=x -> p0.9/q0.1, C1=y -> p0.1/q0.9). The flip now
+   * SUCCEEDS (it used to fail loud under the full reversal). Hand-computed:
+   *   EV(orig) = 9 (see below).
+   *   EV(reversed): D is the root (decide blind), then C1, then C2.
+   *     D=a1: C1=x(0.5)->0.9·10=9; C1=y(0.5)->0.1·10=1 -> 0.5·9+0.5·1 = 5
+   *     D=a2: C1=x(0.5)->0.1·10=1; C1=y(0.5)->0.9·10=9 -> 5
+   *     max(5,5) = 5.
+   *   VOC = |9 − 5| = 4 (the app shows the absolute difference).
    */
   function conditionalTree() {
     const c1 = new TreeNode('C1', 'chance', 'C1')
@@ -83,10 +85,24 @@ describe('flip/VOC — scenario 2: conditional probability tables', () => {
     expect(calculateExpectedValue(conditionalTree())).toBeCloseTo(9)
   })
 
-  it('fails loud instead of silently picking one of C2\'s context-dependent distributions', () => {
-    expect(() => reverseTreeWithBayes(conditionalTree())).toThrow(
-      /olika sannolikheter beroende på kontext/,
-    )
+  it('flips segment-wise with C2 as a fixed conditional-table wall (VOC = 4)', () => {
+    const r = reverseTreeWithBayes(conditionalTree())
+    expect(r.originalEv).toBeCloseTo(9)
+    expect(r.flippedEv).toBeCloseTo(5)
+    expect(Math.abs(r.voc)).toBeCloseTo(4)
+    // Reversed structure: D (decision) root -> C1 (chance) -> C2 (chance wall).
+    expect(r.flipped.nodeType).toBe('decision')
+    expect(r.flipped.label).toBe('D')
+    const c1 = r.flipped.outcomes[0].child!
+    expect(c1.label).toBe('C1')
+    // C2 under C1=x carries the resolved p0.9/q0.1; under C1=y the p0.1/q0.9.
+    const c2x = c1.outcomes.find((o) => o.label === 'x')!.child!
+    const c2y = c1.outcomes.find((o) => o.label === 'y')!.child!
+    expect(c2x.label).toBe('C2')
+    expect(c2x.outcomes.find((o) => o.label === 'p')!.probability).toBeCloseTo(0.9)
+    expect(c2y.outcomes.find((o) => o.label === 'p')!.probability).toBeCloseTo(0.1)
+    // The flipped EV recomputed independently agrees.
+    expect(r.flippedEv).toBeCloseTo(calculateExpectedValue(r.flipped))
   })
 })
 
@@ -290,5 +306,83 @@ describe('flip/VOC — scenario 6: linked chance group folds into ONE shared nod
     // outcome depends on the choice -> the reversal is undefined -> throw,
     // rather than fabricating a folded node from inconsistent probabilities.
     expect(() => reverseTreeWithBayes(build(false))).toThrow(/olika sannolikheter beroende på kontext/)
+  })
+})
+
+describe('flip/VOC — scenario 7: conditional-table WALL with segments on BOTH sides', () => {
+  /**
+   * A(chance) -> B(chance) -> C(chance, conditional table on A -> WALL)
+   *   -> D(decision) -> E(chance) -> payoff.
+   * Canonical: [A, B, C(wall), D, E]. Segment-wise reversal keeps C fixed and
+   * reverses the segment on each side: [A,B] -> [B,A], C stays, [D,E] -> [E,D].
+   * Reversed level order: B -> A -> C -> E -> D. This is the "flips on both
+   * sides of the wall" behaviour.
+   */
+  let counter = 0
+  const id = () => `n${++counter}`
+
+  function bothSidesTree() {
+    counter = 0
+    let payoff = 0
+    const mkE = () => {
+      const e = new TreeNode(id(), 'chance', 'E')
+      addOutcome(e, 'e1', 0.5, payoff++)
+      addOutcome(e, 'e2', 0.5, payoff++)
+      return e
+    }
+    const mkD = () => {
+      const d = new TreeNode(id(), 'decision', 'D')
+      const x = addOutcome(d, 'd1')
+      const y = addOutcome(d, 'd2')
+      setChild(d, x, mkE())
+      setChild(d, y, mkE())
+      return d
+    }
+    const mkC = () => {
+      const c = new TreeNode(id(), 'chance', 'C')
+      const x = addOutcome(c, 'c1', 0.5)
+      const y = addOutcome(c, 'c2', 0.5)
+      c.conditionalTable = [{ condition: new Set(['A:a1']), probabilities: { c1: 0.8, c2: 0.2 } }]
+      setChild(c, x, mkD())
+      setChild(c, y, mkD())
+      return c
+    }
+    const mkB = () => {
+      const b = new TreeNode(id(), 'chance', 'B')
+      const x = addOutcome(b, 'b1', 0.5)
+      const y = addOutcome(b, 'b2', 0.5)
+      setChild(b, x, mkC())
+      setChild(b, y, mkC())
+      return b
+    }
+    const a = new TreeNode('A', 'chance', 'A')
+    const x = addOutcome(a, 'a1', 0.5)
+    const y = addOutcome(a, 'a2', 0.5)
+    setChild(a, x, mkB())
+    setChild(a, y, mkB())
+    relinkByName(a)
+    return a
+  }
+
+  it('reverses each side of the wall, keeping the conditional-table node fixed', () => {
+    const r = reverseTreeWithBayes(bothSidesTree())
+    // Walk the first-child chain down the reversed tree to read the level order.
+    const levels: string[] = []
+    for (let n: TreeNode | null = r.flipped; n; n = n.outcomes[0]?.child ?? null) levels.push(n.label)
+    expect(levels).toEqual(['B', 'A', 'C', 'E', 'D'])
+
+    // The wall C keeps its context-resolved distribution: under A=a1 it is
+    // 0.8/0.2 (its conditional row); under A=a2 it falls back to base 0.5/0.5.
+    const bRoot = r.flipped // B
+    const aUnderB = bRoot.outcomes[0].child! // A
+    const cUnderA1 = aUnderB.outcomes.find((o) => o.label === 'a1')!.child! // C via A=a1
+    const cUnderA2 = aUnderB.outcomes.find((o) => o.label === 'a2')!.child! // C via A=a2
+    expect(cUnderA1.outcomes.find((o) => o.label === 'c1')!.probability).toBeCloseTo(0.8)
+    expect(cUnderA2.outcomes.find((o) => o.label === 'c1')!.probability).toBeCloseTo(0.5)
+
+    // Internally consistent + doesn't throw (the whole point — flip now works
+    // with a conditional table present).
+    expect(r.flippedEv).toBeCloseTo(calculateExpectedValue(r.flipped))
+    expect(Number.isFinite(r.originalEv)).toBe(true)
   })
 })

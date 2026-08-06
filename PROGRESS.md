@@ -4,6 +4,23 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 ---
 
+## 2026-08-04 (segment 29) — Segmentvis flip (villkorsnoder som brytpunkter) + multi-token-villkor
+
+**Vad hände:** Två relaterade önskemål om villkorstabeller + flip/VOC. Bekräftade båda med användaren via två frågor (segmentvis flip; multi-token-UI).
+
+**Del A — villkorstabeller på flera/icke-förälder-noder.** Modellen stödde redan multi-token-villkor (`matchRow` = delmängds-matchning, mest specifik vinner) och icke-förälder-förfäder (`availableTokens` = alla vägens förfäder). Enda luckan var UI:t: pickern byggde bara enkel-token-villkor. Bytte `<select>`-pickern mot **kryssrutor** (`.cond-token`, en per åtkomlig token) — kryssa flera → AND. Eftersom `availableTokens` bara ger vägens tokens (en per förfader-variabel) kan två kryss aldrig bli motsägelsefulla (t.ex. Väder=Sol AND Väder=Regn).
+
+**Del B — segmentvis flip.** Nyckelinsikt: segmentvis vändning **generaliserar** segment 22:s fulla vändning (inga väggar → ett segment → hela vänds, byte-identiskt). En villkorstabell-nod är en **vägg** (fast pivot); varje löpa mellan väggar vänds oberoende (`a→b→C[villkor]→d→e` → `b→a→C→e→d`). En väggs bestämmande förfäder är på lägre djup → i tidigare segment → fortfarande före väggen efter vändning → kontext alltid upplösbar. Implementation i `bayesReversal.ts`: `CanonicalVar.hasTable`, `segmentReverseOrder(canonical)`, och `buildFromOrder` löser en väggs fördelning **per-gren** vid byggtillfället via `resolveWallDist` (går originalträdet längs tilldelningen → rätt instans + historik → `resolveProbability`). `collectCanonical` kastar inte längre `FlipError` för villkorsnoder (väggar); en nod **utan** tabell med olika bas-sannolikheter mellan instanser failar fortfarande loud (genuint inkonsekvent).
+
+**Verifiering:** 260 gröna (+2: både-sidor-vägg-scenario 7, multi-token-UI-test; scenario 2 omskrivet från "failar loud" → "flippar segmentvis, VOC=|9−5|=4, C2-vägg med upplöst 0.9/0.1 resp. 0.1/0.9"; picker-testet uppdaterat till kryssrutor). `tsc` + build rena. **Live-verifierat:** byggde C1→D→C2 med villkorstabell på C2, flippade → **inget flip-fel längre**, VOC-raden visar tal, höger pill-bar `[D, C1, C2]` (segment `[C1,D]`→`[D,C1]`, väggen C2 kvar sist); villkorsdialogen visar kryssrutor för båda förfäderna (C1, D). Inga konsolfel.
+
+**Judgment calls:**
+1. **Segmentvis generaliserar fullt** — samma kod (`buildFromOrder` är ordnings-agnostisk), bara `order` och distributionsupplösningen ändrades. Tabellfria träd byte-identiska med segment 22.
+2. **Väggkriterium = "har villkorstabell"** (`conditionalTable.length > 0` på någon instans på nivån). En kontextberoende-utan-tabell-nod (olika bas-probs, ingen tabell — som UI:t aldrig producerar men tester bygger) är INTE en vägg → failar fortfarande loud (korrekt: inkonsekvent variabel utan förklaring).
+3. **Väggens fördelning löses per-gren vid bygget** (inte bevarad som villkorstabell i det flippade trädet) — enklare, inga token-ommappningar, och det flippade trädet är ändå härlett/redigerbart. Fungerar eftersom väggen alltid har sina förfäder före sig i den segmentvisa ordningen.
+
+---
+
 ## 2026-08-04 (segment 28) — Språkväxlare (SV/EN) + i18n av hela gränssnittet
 
 **Vad byggdes:** En liten SV/EN-växlare längst till höger i toppremsan; klick byter språk för hela gränssnittet och sparar valet (localStorage). Bara två språk (svenska default, engelska) per kursens kontext.

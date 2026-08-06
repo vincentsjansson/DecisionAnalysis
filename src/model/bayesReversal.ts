@@ -34,6 +34,11 @@ interface CanonicalVar {
   displayLabel: string
   nodeType: NodeType
   outcomeLabels: string[]
+  /** True when a node at this level carries a conditional table — a "wall" that
+   * stays fixed during the flip (segment-wise reversal); the levels on each side
+   * of it reverse independently. Its context-dependent distribution is resolved
+   * per-branch at build time (its determining ancestors stay before it). */
+  hasTable: boolean
 }
 
 interface PathInfo {
@@ -124,8 +129,12 @@ function collectCanonical(root: TreeNodeType): Collected {
         displayLabel: node.label,
         nodeType: node.nodeType,
         outcomeLabels: node.outcomes.map((o) => o.label),
+        hasTable: node.conditionalTable.length > 0,
       }
     } else {
+      // Any instance at this level carrying a conditional table makes the level
+      // a wall (fixed pivot in the flip).
+      if (node.conditionalTable.length > 0) existing.hasTable = true
       if (existing.variableId !== node.variableId || existing.nodeType !== node.nodeType) {
         throw new FlipError(
           t().flipLevelMismatch(
@@ -160,26 +169,33 @@ function collectCanonical(root: TreeNodeType): Collected {
         throw new FlipError(t().flipSumNotOne(displayName(node), where, fmtP(sum)))
       }
 
-      const prev = distGroups.get(node.variableId)
-      if (prev) {
-        for (const [label, p] of dist) {
-          const q = prev.get(label)!
-          const equal = (Number.isNaN(p) && Number.isNaN(q)) || Math.abs(p - q) <= DIST_EPSILON
-          if (!equal) {
-            throw new FlipError(
-              t().flipDiffContext(
-                displayName(node),
-                distDesc.get(node.variableId)!,
-                fmtDist(prev),
-                where,
-                fmtDist(dist),
-              ),
-            )
+      // A wall level (has a conditional table) keeps its own context-dependent
+      // distribution, resolved per-branch at build time — it never needs a single
+      // group distribution, so skip the consistency check and distGroups entry.
+      // A level WITHOUT a table but whose base probabilities still differ across
+      // instances is a genuinely inconsistent variable — that still fails loud.
+      if (!canonical[depth].hasTable) {
+        const prev = distGroups.get(node.variableId)
+        if (prev) {
+          for (const [label, p] of dist) {
+            const q = prev.get(label)!
+            const equal = (Number.isNaN(p) && Number.isNaN(q)) || Math.abs(p - q) <= DIST_EPSILON
+            if (!equal) {
+              throw new FlipError(
+                t().flipDiffContext(
+                  displayName(node),
+                  distDesc.get(node.variableId)!,
+                  fmtDist(prev),
+                  where,
+                  fmtDist(dist),
+                ),
+              )
+            }
           }
+        } else {
+          distGroups.set(node.variableId, dist)
+          distDesc.set(node.variableId, where)
         }
-      } else {
-        distGroups.set(node.variableId, dist)
-        distDesc.set(node.variableId, where)
       }
     }
 
@@ -248,6 +264,33 @@ function buildFromOrder(
     }
   }
 
+  /** Resolves a WALL chance node's distribution for the current context by
+   * walking the original tree along `assign` to the matching instance and its
+   * history, then resolving each outcome (honouring its conditional table). The
+   * segment-wise order keeps a wall's determining ancestors before it, so they
+   * are always assigned here. Returns null when the context can't be resolved
+   * (an ancestor isn't assigned) — the outcome probabilities then fall to NaN. */
+  const resolveWallDist = (
+    assign: Map<string, string>,
+    variableId: string,
+  ): Map<string, number> | null => {
+    let node = c.root
+    const history = new Set<string>()
+    for (;;) {
+      if (node.variableId === variableId) {
+        const dist = new Map<string, number>()
+        for (const edge of node.outcomes) dist.set(edge.label, resolveProbability(node, edge, history))
+        return dist
+      }
+      const outLabel = assign.get(node.variableId)
+      if (outLabel === undefined) return null
+      const edge = node.outcomes.find((o) => o.label === outLabel)
+      if (!edge || !edge.child) return null
+      history.add(branchLabel(node, edge.label))
+      node = edge.child
+    }
+  }
+
   // Per-variable instance counter, so preserved groups get contiguous
   // instanceIndex values (0 = primary) for correct prime-mark display.
   const instCount = new Map<string, number>()
@@ -269,9 +312,16 @@ function buildFromOrder(
 
     const v = order[k]
     const node = makeNode(v)
-    // Each chance node keeps its own (context-independent) distribution —
-    // copied unchanged, never recomputed for the new position.
-    const dist = v.nodeType === 'chance' ? c.distGroups.get(v.variableId) : undefined
+    // A plain chance node keeps its own context-independent distribution
+    // (copied unchanged). A WALL node's distribution is context-dependent, so
+    // resolve it per-branch from the current assignment (its ancestors are kept
+    // before it by the segment-wise order).
+    const dist =
+      v.nodeType !== 'chance'
+        ? undefined
+        : v.hasTable
+          ? resolveWallDist(assign, v.variableId) ?? undefined
+          : c.distGroups.get(v.variableId)
 
     for (const outLabel of v.outcomeLabels) {
       const probability = dist ? (dist.get(outLabel) ?? NaN) : NaN
@@ -293,16 +343,41 @@ function buildFromOrder(
   return built.node
 }
 
-/** Full sequence reversal (segment 22): the flipped tree reverses the ENTIRE
- * node sequence along every path, regardless of node type (a→b→c becomes
- * c→b→a). A purely structural mirror — each moved node keeps its own outcomes
- * and their probabilities, copied unchanged (no Bayesian recomputation). Not
- * "value of clairvoyance" semantics anymore (a decision can end up before
- * information it originally depended on), so EV is not guaranteed to increase
- * and the app shows VOC as the direction-agnostic |EV_left − EV_right|. */
+/** Segment-wise reversal order: conditional-table levels ("walls") stay fixed
+ * in place, and each run of levels between walls (or between a wall and an end)
+ * is reversed independently. With NO walls this is a plain full reversal of the
+ * whole sequence — so a table-free tree behaves exactly as before (segment 22).
+ * A wall's determining ancestors are all at lower depth, hence in an earlier
+ * segment, hence still before the wall after reversal — so its context stays
+ * resolvable. */
+function segmentReverseOrder(canonical: CanonicalVar[]): CanonicalVar[] {
+  const order: CanonicalVar[] = []
+  let segment: CanonicalVar[] = []
+  for (const v of canonical) {
+    if (v.hasTable) {
+      order.push(...segment.reverse())
+      segment = []
+      order.push(v) // wall stays put
+    } else {
+      segment.push(v)
+    }
+  }
+  order.push(...segment.reverse())
+  return order
+}
+
+/** Segment-wise reversal (segment 29, generalizes the segment-22 full reversal):
+ * reverses the node sequence along every path, BUT treats a conditional-table
+ * node as a fixed "breaking point" — the levels on each side of it reverse
+ * independently while it stays in place, so its distribution (which depends on
+ * ancestors that stay before it) is still well-defined. A tree with no
+ * conditional tables reverses in full, exactly as before. Each moved chance node
+ * keeps its outcomes; a wall node's context-dependent distribution is resolved
+ * per-branch. Not strict "value of clairvoyance" — the app shows VOC as the
+ * direction-agnostic |EV_left − EV_right|. */
 export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
   const c = collectCanonical(root)
-  const order = c.canonical.slice().reverse()
+  const order = segmentReverseOrder(c.canonical)
   let idCounter = 0
   const flipped = buildFromOrder(c, order, () => `flip_${++idCounter}`, false)
 

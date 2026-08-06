@@ -1520,31 +1520,44 @@ export function createApp(
 
     body.appendChild(table)
 
-    // Add-condition picker: one ancestor-outcome token per new row.
+    // Add-condition picker: check ONE OR MORE ancestor-outcome tokens to build a
+    // condition. Multiple checks = an AND across ancestors (e.g. "stormy AND
+    // precipitation"). availableTokens returns only reachable path tokens (one
+    // per ancestor variable), so two checks are always different ancestors — no
+    // contradictory same-variable pair is possible.
     const tokens = availableTokens(node)
-    const picker = document.createElement('select')
-    for (const token of tokens) {
-      const opt = document.createElement('option')
-      opt.value = token
-      opt.textContent = tokenDisplay(token)
-      picker.appendChild(opt)
-    }
-    const pickerRow = document.createElement('div')
-    pickerRow.className = 'dialog-actions'
-    pickerRow.append(
-      picker,
-      dialogButton(t().addCondition, () => {
-        if (!picker.value) return
-        addMatrixRow(new Set([picker.value]), outcomeLabels.map(() => undefined))
-      }),
-    )
     if (tokens.length === 0) {
       const hint = document.createElement('p')
       hint.className = 'hint'
       hint.textContent = t().noConditionsAvailable
       body.appendChild(hint)
     } else {
-      body.appendChild(pickerRow)
+      const tokenBox = document.createElement('div')
+      tokenBox.className = 'cond-tokens'
+      const checks: HTMLInputElement[] = []
+      for (const token of tokens) {
+        const lbl = document.createElement('label')
+        lbl.className = 'cond-token'
+        const cb = document.createElement('input')
+        cb.type = 'checkbox'
+        cb.value = token
+        checks.push(cb)
+        const span = document.createElement('span')
+        span.textContent = tokenDisplay(token)
+        lbl.append(cb, span)
+        tokenBox.appendChild(lbl)
+      }
+      const pickerRow = document.createElement('div')
+      pickerRow.className = 'dialog-actions'
+      pickerRow.append(
+        dialogButton(t().addCondition, () => {
+          const selected = checks.filter((c) => c.checked).map((c) => c.value)
+          if (selected.length === 0) return
+          addMatrixRow(new Set(selected), outcomeLabels.map(() => undefined))
+          checks.forEach((c) => (c.checked = false))
+        }),
+      )
+      body.append(tokenBox, pickerRow)
     }
 
     footer.append(

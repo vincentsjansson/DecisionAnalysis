@@ -119,6 +119,23 @@ body {
   margin: 0 2px;
 }
 
+/* Conditional-table token picker: check one or more ancestor outcomes (AND). */
+.cond-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 6px 0;
+}
+
+.cond-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
 /* Language toggle — a small segmented SV/EN control in the title-block strip. */
 .lang-toggle {
   display: flex;

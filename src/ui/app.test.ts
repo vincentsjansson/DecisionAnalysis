@@ -1324,11 +1324,55 @@ describe('createApp', () => {
         .find((b) => b.textContent!.includes('Villkorstabell'))!
         .dispatchEvent(new MouseEvent('click', { bubbles: true }))
 
-      const options = [...container.querySelectorAll('.dialog select option')].map(
-        (o) => o.textContent,
+      // The condition builder is a set of checkboxes (one per reachable token).
+      const options = [...container.querySelectorAll('.dialog .cond-token')].map((l) =>
+        l.textContent?.trim(),
       )
       expect(options).toContain('Väder = Sol')
       expect(options).not.toContain('Väder = Regn') // unreachable for this instance
+    })
+
+    it('builds a condition from MULTIPLE ancestor tokens (AND)', () => {
+      const { app, container } = newApp()
+      // Storm(chance) -> Nederbörd(chance) -> Översvämning(chance): the last node
+      // has two ancestors, so a condition can AND them ("stormy AND precipitation").
+      const storm = app.api.createRoot('chance', 'Storm')
+      const eJa = app.api.addOutcomeTo(storm, 'Ja', 0.3)
+      app.api.addOutcomeTo(storm, 'Nej', 0.7)
+      const neder = app.api.attachChild(storm, eJa, 'chance', 'Nederbörd')
+      const nJa = app.api.addOutcomeTo(neder, 'Ja', 0.5)
+      app.api.addOutcomeTo(neder, 'Nej', 0.5)
+      const flood = app.api.attachChild(neder, nJa, 'chance', 'Översvämning')
+      app.api.addOutcomeTo(flood, 'Ja', 0.2)
+      app.api.addOutcomeTo(flood, 'Nej', 0.8)
+
+      // Open Översvämning's conditional table; check BOTH ancestor tokens.
+      container
+        .querySelector('[data-node-id="' + flood.id + '"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      ;[...container.querySelectorAll('.menu-item')]
+        .find((b) => b.textContent!.includes('Villkorstabell'))!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      const checks = [...container.querySelectorAll('.dialog .cond-token input')] as HTMLInputElement[]
+      expect(checks).toHaveLength(2) // Storm = Ja AND Nederbörd = Ja
+      checks.forEach((c) => (c.checked = true))
+      ;[...container.querySelectorAll('.dialog button')]
+        .find((b) => b.textContent!.includes('villkor'))! // "+ villkor"
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      // Fill the new row's probabilities and save.
+      const rows = [...container.querySelectorAll('.dialog table tbody tr')]
+      const inputs = [...rows[rows.length - 1].querySelectorAll('input')] as HTMLInputElement[]
+      inputs[0].value = '0.6'
+      inputs[1].value = '0.4'
+      ;[...container.querySelectorAll('.dialog button')]
+        .find((b) => b.textContent === 'Spara')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+      // The saved condition ANDs both ancestor tokens.
+      expect(flood.conditionalTable).toHaveLength(1)
+      expect(flood.conditionalTable[0].condition.size).toBe(2)
+      expect(flood.conditionalTable[0].condition.has(`${storm.id}:Ja`)).toBe(true)
+      expect(flood.conditionalTable[0].condition.has(`${neder.id}:Ja`)).toBe(true)
     })
 
     it('a table-driven instance shows a distinct note in the outcome editor', () => {
