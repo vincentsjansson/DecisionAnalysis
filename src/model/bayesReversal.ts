@@ -444,7 +444,11 @@ export function reverseTreeWithBayes(root: TreeNodeType): FlipResult {
   const c = collectCanonical(root)
   const order = segmentReverseOrder(c.canonical)
   let idCounter = 0
-  const flipped = buildFromOrder(c, order, () => `flip_${++idCounter}`, false)
+  // preserveGroups: duplicated instances of a variable in the flipped tree share
+  // its variableId (are linked), so a level materialized several times reads as
+  // ONE variable — the pill bar sees a uniform level (not a locked "wall"), and
+  // the editable right tree syncs linked instances like the left tree does.
+  const flipped = buildFromOrder(c, order, () => `flip_${++idCounter}`, true)
 
   let originalEv = NaN
   let flippedEv = NaN

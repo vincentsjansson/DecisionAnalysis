@@ -16,6 +16,8 @@ Format: datum — vad hände — status/beslut. Nyast överst. Uppdatera denna f
 
 **Judgment call:** väggar är inte längre helt låsta i pill-baren, men fall 1 blockeras per-swap (inte per-nivå) eftersom giltigheten beror på *paret* som byts, inte på nivån ensam. `.wall`-markeringen signalerar "villkorspivot" utan att lova att alla drag går.
 
+**Uppföljning (samma dag): höger pill-bar var helt låst.** Användaren såg att det speglade trädets pill-bar visades som helt låst/väggad — även för träd helt utan villkorstabeller. Orsak: flippen byggde med `preserveGroups=false` (singleton-noder), så en duplicerad nivå (t.ex. "Bet" under både Rain och Sun) fick blandade `variableId` → `levelSequence` såg den som icke-uniform → `.locked`. Fix: flippen bygger nu med `preserveGroups=true` — duplicerade instanser delar variabelns `variableId` (länkade), så nivån läses som EN variabel (uniform, inte låst), och det redigerbara högerträdet synkar länkade instanser precis som vänster. Bonus: mer korrekt semantiskt (de ÄR samma variabel), och de visas nu med primtecken (Bet, Bet') konsekvent med vänsterträdet. 261 gröna (inget test förlitade sig på singleton-beteendet); live-verifierat: höger pill-bar `[Weather, Bet]` utan lås, VOC 0.7 oförändrat. Inga konsolfel.
+
 ---
 
 ## 2026-08-04 (segment 29) — Segmentvis flip (villkorsnoder som brytpunkter) + multi-token-villkor
