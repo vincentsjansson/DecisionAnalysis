@@ -1721,31 +1721,24 @@ export function createApp(
     setMessage(t().savedAs(a.download))
   }
 
-  const saveAsPng = (): void => {
-    const treeSvg = canvasHost.querySelector('svg') as SVGSVGElement | null
-    if (!state.root || !treeSvg) {
+  // Each PNG export is its OWN menu item -> a single deliberate download, so the
+  // browser never blocks a second simultaneous download (which is what dropped
+  // the reversed tree when both were exported at once).
+  const exportOnePng = (svg: SVGSVGElement | null, name: string): void => {
+    if (!state.root || !svg) {
       setMessage(t().nothingToExport)
       return
     }
     guarded(() => {
-      const base = documentFilename(state.root).replace(/\.json$/, '')
-      const exported: string[] = []
-      // Left (main) tree.
-      const leftName = `${base}.png`
-      if (exportTreePng(treeSvg, leftName)) exported.push(leftName)
-      // In split mode, the right (reversed) tree is its OWN PNG file.
-      const rightSvg = rightHost.querySelector('svg') as SVGSVGElement | null
-      if (state.split && state.rightRoot && rightSvg) {
-        const rightName = `${base}-omvant.png`
-        if (exportTreePng(rightSvg, rightName)) exported.push(rightName)
-      }
-      setMessage(
-        exported.length > 0
-          ? t().exported(exported.join(' + '))
-          : t().couldNotExportEmpty,
-      )
+      const started = exportTreePng(svg, name)
+      setMessage(started ? t().exported(name) : t().couldNotExportEmpty)
     })
   }
+  const pngBaseName = (): string => documentFilename(state.root).replace(/\.json$/, '')
+  const saveAsPng = (): void =>
+    exportOnePng(canvasHost.querySelector('svg'), `${pngBaseName()}.png`)
+  const saveAsPngReversed = (): void =>
+    exportOnePng(rightHost.querySelector('svg'), `${pngBaseName()}-omvant.png`)
 
   /** Opens the Save dropdown anchored under the Save button, reusing the shared
    * context-menu styling so it matches the node menu's look. */
@@ -1758,6 +1751,10 @@ export function createApp(
     menu.style.left = `${brect.left - crect.left}px`
     menu.style.top = `${brect.bottom - crect.top + 2}px`
     menu.append(menuItem(t().saveAsFile, saveAsFile), menuItem(t().saveAsPng, saveAsPng))
+    // In split mode the reversed (right) tree gets its own explicit export.
+    if (state.split && state.rightRoot && rightHost.querySelector('svg')) {
+      menu.appendChild(menuItem(t().saveAsPngReversed, saveAsPngReversed))
+    }
     menuLayer.appendChild(menu)
   }
 

@@ -52,6 +52,7 @@ export interface Dict {
   load: string
   saveAsFile: string
   saveAsPng: string
+  saveAsPngReversed: string
   langTitle: string
   // ── Utility bar ──
   utilityFunction: string
@@ -249,6 +250,7 @@ const sv: Dict = {
   load: 'Ladda',
   saveAsFile: 'Spara som fil',
   saveAsPng: 'Spara som PNG',
+  saveAsPngReversed: 'Spara omvänt träd som PNG',
   langTitle: 'Byt språk / Switch language',
   utilityFunction: 'Nyttofunktion:',
   utilityLinear: 'Linjär (riskneutral)',
@@ -479,6 +481,7 @@ const en: Dict = {
   load: 'Load',
   saveAsFile: 'Save as file',
   saveAsPng: 'Save as PNG',
+  saveAsPngReversed: 'Save reversed tree as PNG',
   langTitle: 'Switch language / Byt språk',
   utilityFunction: 'Utility function:',
   utilityLinear: 'Linear (risk-neutral)',

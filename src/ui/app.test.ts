@@ -670,6 +670,29 @@ describe('createApp', () => {
     expect(app.state.message).toContain('Inget träd att exportera')
   })
 
+  it('offers a separate "reversed tree as PNG" export only in split mode', () => {
+    const { app, container } = newApp()
+    const root = app.api.createRoot('decision', 'Bet')
+    const yes = app.api.addOutcomeTo(root, 'Yes')
+    app.api.addOutcomeTo(root, 'No', NaN, 3)
+    const w = app.api.attachChild(root, yes, 'chance', 'Weather')
+    app.api.addOutcomeTo(w, 'Rain', 0.3, 8)
+    app.api.addOutcomeTo(w, 'Sun', 0.7, 2)
+    const saveBtn = container.querySelector('#save') as HTMLButtonElement
+
+    // Not split: no reversed-tree item.
+    saveBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    let items = [...container.querySelectorAll('.menu-item')].map((b) => b.textContent)
+    expect(items.some((x) => x?.includes('omvänt'))).toBe(false)
+
+    // Split (flip): the reversed-tree PNG item appears.
+    app.api.toggleSplit()
+    expect(app.state.split).toBe(true)
+    saveBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    items = [...container.querySelectorAll('.menu-item')].map((b) => b.textContent)
+    expect(items.some((x) => x?.includes('Spara omvänt träd som PNG'))).toBe(true)
+  })
+
   it('round-trips linked variables + conditional tables + EU through save/load', () => {
     const { app } = newApp()
     const test = app.api.createRoot('chance', 'test')
