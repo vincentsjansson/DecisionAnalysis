@@ -563,7 +563,7 @@ Live-testning avslöjade tre saker: en **designändring** (inte buggfix) och tv�
 
 ## 2026-07-27 — Legacy-genomgång (den riktiga koden) + tre låsta arkitekturbeslut
 
-**Vad hände:** Vincent pekade ut en lokal mapp (`C:\Users\vince\Desktop\prog\git test\Beslutsanalys`) som visade sig innehålla en betydligt mer komplett version av det gamla projektet än vad GitHub hade — en fungerande FastAPI-backend (`main.py`, `/ev`, `/backward`), riktig EV- och backward-fill-logik, och en nästan komplett WPF-app (canvas-rendering, dialoger, save/load). Denna ersatte den tunnare GitHub-baserade `legacy/`-arkiveringen (se separat commit).
+**Vad hände:** Vincent pekade ut en lokal mapp som visade sig innehålla en betydligt mer komplett version av det gamla projektet än vad GitHub hade — en fungerande FastAPI-backend (`main.py`, `/ev`, `/backward`), riktig EV- och backward-fill-logik, och en nästan komplett WPF-app (canvas-rendering, dialoger, save/load). Denna ersatte den tunnare GitHub-baserade `legacy/`-arkiveringen (se separat commit).
 
 En fullständig genomläsning av `legacy/frontend/csharp-wpf/MainWindow.xaml.cs` (1171 rader), `ViewModels/TreeViewModel.cs` och `legacy/backend/treelogic.py` avslöjade:
 
